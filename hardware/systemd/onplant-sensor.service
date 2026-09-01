@@ -1,0 +1,12 @@
+[Unit]
+Description=OnPlant sensor sender
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/onplant/onplant-robot.env
+ExecStart=/bin/bash -lc 'cd "$ONPLANT_PROJECT_DIR" && exec "$ONPLANT_PROJECT_DIR/venv/bin/python3" sensor_sender.py --server "$ONPLANT_SERVER" --robot-id "$ONPLANT_ROBOT_ID" --bus "${ONPLANT_SENSOR_BUS:-3}" --interval "${ONPLANT_SENSOR_INTERVAL:-0.5}" --server-interval "${ONPLANT_SERVER_INTERVAL:-5}" --lux-mode real --dht-mode dummy --soil-mode dummy'
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

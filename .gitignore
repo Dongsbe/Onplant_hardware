@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Logs
+*.log
+nohup.out
+
+# Runtime / local cache
+*.db
+*.sqlite
+*.sqlite3
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Archived unused code
+_archive_unused_*/
