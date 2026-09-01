@@ -33,6 +33,7 @@ DEFAULT_ROBOT_ID = "raspbot-a"
 DEFAULT_MIC_DEVICE = "plughw:2,0"
 DEFAULT_SPEAKER_DEVICE = "plughw:3,0"
 DEFAULT_MODEL_PATH = Path(__file__).resolve().parent / "models" / "vosk-model-small-ko-0.22"
+_last_blocked_notice_at = 0.0
 
 
 def record_voice(path: Path, seconds: float, mic_device: str) -> None:
@@ -221,12 +222,16 @@ def speak_text(args: argparse.Namespace, text: str) -> None:
 
 
 def handle_local_transcript(args: argparse.Namespace, transcript: str) -> None:
+    global _last_blocked_notice_at
     print("transcript:", transcript)
     command = classify_local_command(transcript)
     drive_running = bool(read_runtime_state().get("drive_running"))
 
     if drive_running and command != "stop":
-        speak_text(args, "현재 이동 중이라 정지 명령만 받을 수 있어요.")
+        now_ts = time.time()
+        if now_ts - _last_blocked_notice_at > 10:
+            speak_text(args, "현재 이동 중이라 정지 명령만 받을 수 있어요.")
+            _last_blocked_notice_at = now_ts
         return
     if command == "stop":
         append_local_command("stop", transcript)
@@ -243,14 +248,16 @@ def handle_local_transcript(args: argparse.Namespace, transcript: str) -> None:
         speak_text(args, reply)
         return
 
+    write_display_state("report", "응답 처리 중", duration=8.0)
     try:
         result = post_text_chat(args.server, args.robot_id, args.username, transcript)
-        speak_text(args, str(result.get("reply") or "응답을 만들지 못했어요."))
+        reply = str(result.get("reply") or "응답을 만들지 못했어요.")
+        write_display_state("report", reply, duration=12.0)
+        speak_text(args, reply)
     except requests.RequestException:
-        speak_text(
-            args,
-            "서버 연결이 없어 일반 대화는 사용할 수 없어요. 상태 조회와 정지 명령은 사용할 수 있습니다.",
-        )
+        reply = "서버와 연결할 수 없습니다. 상태 조회와 정지 명령은 사용할 수 있습니다."
+        write_display_state("report", reply, duration=12.0)
+        speak_text(args, reply)
 
 
 def server_voice_turn(
