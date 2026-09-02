@@ -1,10 +1,12 @@
+import os
+
 from hardware.raspbot_driver import RaspbotDriver
 
 
 class MovementController:
     def __init__(self):
         self.driver = RaspbotDriver()
-        self.speed = 20
+        self.speed = int(os.getenv("ONPLANT_DRIVE_SPEED", "16"))
 
     def forward(self):
         self.driver.move_forward(self.speed)

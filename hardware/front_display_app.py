@@ -30,7 +30,7 @@ from local_runtime import (  # noqa: E402
 )
 
 
-DISPLAY_BUILD = "local-first-touch-20260824-6"
+DISPLAY_BUILD = "local-first-touch-20260902-1"
 
 DEFAULT_STATUS = {
     "online": False,
@@ -791,6 +791,52 @@ body {
   white-space: nowrap;
 }
 
+.notice {
+  padding: clamp(18px, 4vh, 42px) clamp(18px, 5vw, 56px);
+}
+
+.notice.active {
+  display: grid;
+  place-items: center;
+}
+
+.notice-shell {
+  width: min(760px, 100%);
+  display: grid;
+  gap: clamp(12px, 2.5vh, 22px);
+  text-align: center;
+  animation: report-in .5s ease both;
+}
+
+.notice-icon {
+  width: clamp(76px, 15vw, 116px);
+  height: clamp(76px, 15vw, 116px);
+  margin: 0 auto;
+  border-radius: 999px;
+  border: 2px solid rgba(75, 118, 64, .24);
+  background: rgba(255, 255, 255, .72);
+  display: grid;
+  place-items: center;
+  color: #477640;
+  font-size: clamp(38px, 8vw, 60px);
+  font-weight: 900;
+}
+
+.notice h1 {
+  margin: 0;
+  color: #17351c;
+  font-size: clamp(34px, 7vw, 58px);
+  line-height: 1.12;
+}
+
+.notice p {
+  margin: 0;
+  color: #52684c;
+  font-size: clamp(18px, 3.4vw, 28px);
+  line-height: 1.35;
+  white-space: pre-line;
+}
+
 @keyframes idle-alive {
   0%, 100% { transform: translateY(0) scale(1); }
   48% { transform: translateY(-4px) scale(1.01); }
@@ -1034,6 +1080,13 @@ body {
         <div class="metric-grid"><div><span>온도</span><strong id="dTemp">--C</strong></div><div><span>습도</span><strong id="dHum">--%</strong></div><div><span>조도</span><strong id="dLux">-- lux</strong></div><div><span>토양수분</span><strong id="dSoil">--%</strong></div></div>
       </div>
     </section>
+    <section class="screen notice" data-screen="notice">
+      <div class="notice-shell">
+        <div class="notice-icon" id="noticeIcon">...</div>
+        <h1 id="noticeTitle">응답하고 있습니다</h1>
+        <p id="noticeMessage">서버 LLM에 연결하고 있습니다.</p>
+      </div>
+    </section>
   </main>
   <div class="menu-layer" id="menuLayer" aria-hidden="true">
     <section class="touch-menu" role="dialog" aria-modal="true" aria-labelledby="menuTitle">
@@ -1077,15 +1130,22 @@ body {
   </div>
   <div class="brightness-shade" id="brightnessShade"></div>
   <script>
-    const screens = new Set(["idle", "sulk", "angry", "sleep", "happy", "listening", "analyzing", "report"]);
+    const screens = new Set(["idle", "sulk", "angry", "sleep", "happy", "listening", "analyzing", "report", "notice"]);
     let currentScreen = "idle";
     let lastStatus = null;
     let forcedScreenUntil = 0;
     function show(screen) { const next = screens.has(screen) ? screen : "idle"; currentScreen = next; document.querySelectorAll(".screen").forEach((node) => node.classList.toggle("active", node.dataset.screen === next)); }
     function setMetric(id, value, suffix, digits = 0) { const node = document.getElementById(id); if (!node) return; const n = Number(value); node.textContent = Number.isFinite(n) ? `${n.toFixed(digits)}${suffix}` : `--${suffix}`; }
-    function mapScreen(data) { if (!data.online) return "idle"; if (data.screen === "report") return "report"; if (data.emotion === "warn" || data.emotion === "alert") return "sulk"; if (data.emotion === "angry") return "angry"; if (data.emotion === "sleep") return "sleep"; if (data.emotion === "listening") return "listening"; if (data.emotion === "analyzing") return "analyzing"; if (data.emotion === "happy") return "happy"; return "idle"; }
-    async function refresh() { try { const res = await fetch("/api/status?ts=" + Date.now(), { cache: "no-store" }); const data = await res.json(); lastStatus = data; if (Date.now() >= forcedScreenUntil && !menuOpen && !settingsOpen) show(mapScreen(data)); const net = document.getElementById("netState"); const serverOnline = Boolean(data.server_online); net.textContent = serverOnline ? "ONLINE" : "OFFLINE"; net.className = "status-pill" + (serverOnline ? "" : " offline"); setMetric("dTemp", data.temperature, "C", 1); setMetric("dHum", data.humidity, "%"); setMetric("dLux", data.lux, " lux"); setMetric("dSoil", data.soil_moisture, "%"); document.getElementById("reportTitle").textContent = `현재 상태: ${data.sub_message || "확인 중"}`; document.getElementById("reportMessage").textContent = data.report_message || data.message || "센서 데이터를 확인하고 있습니다."; document.getElementById("reportRecommend").textContent = data.recommendation || "현재 환경을 유지해 주세요."; } catch { if (!menuOpen && !settingsOpen) show("idle"); } }
-    function blinkActiveFace() { if (currentScreen === "sleep" || currentScreen === "report") return; const eyes = document.querySelector(".screen.active .eyes"); if (!eyes) return; eyes.classList.remove("blink-now"); void eyes.offsetWidth; eyes.classList.add("blink-now"); window.setTimeout(() => eyes.classList.remove("blink-now"), 220); }
+    function mapScreen(data) { if (!data.online) return "idle"; if (data.screen === "notice") return "notice"; if (data.screen === "report") return "report"; if (data.emotion === "warn" || data.emotion === "alert") return "sulk"; if (data.emotion === "angry") return "angry"; if (data.emotion === "sleep") return "sleep"; if (data.emotion === "listening") return "listening"; if (data.emotion === "analyzing") return "analyzing"; if (data.emotion === "happy") return "happy"; return "idle"; }
+    function updateNotice(data) {
+      const message = data.message || "응답하고 있습니다";
+      const offline = message.includes("서버 연결") || message.includes("연결할 수 없습니다");
+      document.getElementById("noticeIcon").textContent = offline ? "!" : "...";
+      document.getElementById("noticeTitle").textContent = offline ? "서버 연결이 필요합니다" : "응답하고 있습니다";
+      document.getElementById("noticeMessage").textContent = data.report_message || message;
+    }
+    async function refresh() { try { const res = await fetch("/api/status?ts=" + Date.now(), { cache: "no-store" }); const data = await res.json(); lastStatus = data; if (Date.now() >= forcedScreenUntil && !menuOpen && !settingsOpen) show(mapScreen(data)); const net = document.getElementById("netState"); const serverOnline = Boolean(data.server_online); net.textContent = serverOnline ? "ONLINE" : "OFFLINE"; net.className = "status-pill" + (serverOnline ? "" : " offline"); setMetric("dTemp", data.temperature, "C", 1); setMetric("dHum", data.humidity, "%"); setMetric("dLux", data.lux, " lux"); setMetric("dSoil", data.soil_moisture, "%"); document.getElementById("reportTitle").textContent = `현재 상태: ${data.sub_message || "확인 중"}`; document.getElementById("reportMessage").textContent = data.report_message || data.message || "센서 데이터를 확인하고 있습니다."; document.getElementById("reportRecommend").textContent = data.recommendation || "현재 환경을 유지해 주세요."; updateNotice(data); } catch { if (!menuOpen && !settingsOpen) show("idle"); } }
+    function blinkActiveFace() { if (currentScreen === "sleep" || currentScreen === "report" || currentScreen === "notice") return; const eyes = document.querySelector(".screen.active .eyes"); if (!eyes) return; eyes.classList.remove("blink-now"); void eyes.offsetWidth; eyes.classList.add("blink-now"); window.setTimeout(() => eyes.classList.remove("blink-now"), 220); }
     const menuLayer = document.getElementById("menuLayer");
     const menuResult = document.getElementById("menuResult");
     const settingsLayer = document.getElementById("settingsLayer");
@@ -1339,17 +1399,19 @@ def local_status() -> dict:
         report_message = "현재 환경이 안정적이에요."
         recommendation = "지금 상태를 유지해 주세요."
     report_until = clamp_number(local_display.get("report_until"), 0)
-    show_report = local_display.get("screen") == "report" and report_until > now()
+    local_screen = str(local_display.get("screen") or "")
+    show_report = local_screen == "report" and report_until > now()
+    show_notice = local_screen == "notice" and report_until > now()
     display_message = str(local_display.get("message") or "").strip()
-    message = display_message[:80] if show_report and display_message else "OnPlant"
-    if show_report and display_message:
+    message = display_message[:80] if (show_report or show_notice) and display_message else "OnPlant"
+    if (show_report or show_notice) and display_message:
         report_message = display_message[:100]
         recommendation = ""
 
     return {
         "online": True,
         "server_online": False,
-        "screen": "report" if show_report else "face",
+        "screen": "notice" if show_notice else "report" if show_report else "face",
         "emotion": emotion,
         "message": message[:80],
         "sub_message": level,
@@ -1371,7 +1433,7 @@ def merge_local_status(remote: dict) -> dict:
     if not local.get("online"):
         return {**remote, "server_online": True, "build": DISPLAY_BUILD}
     merged = {**remote, **local, "server_online": True, "build": DISPLAY_BUILD}
-    if local.get("screen") != "report" and remote.get("screen") == "report":
+    if local.get("screen") not in {"report", "notice"} and remote.get("screen") == "report":
         merged["screen"] = "report"
         merged["message"] = remote.get("message") or merged["message"]
     return merged
@@ -1383,7 +1445,9 @@ def status_from_summary(summary: dict, display: dict) -> dict:
     status_info = summary.get("status") or {}
 
     screen = display.get("screen") or "idle"
-    if screen in {"report", "dashboard", "status"}:
+    if screen == "notice":
+        screen = "notice"
+    elif screen in {"report", "dashboard", "status"}:
         screen = "report"
     else:
         screen = "face"
@@ -1522,6 +1586,9 @@ class DisplayHandler(BaseHTTPRequestHandler):
         if self.path == "/api/actions/start-light-search":
             runtime = read_runtime_state()
             if runtime.get("drive_running"):
+                message = "이미 조도 탐색 중입니다."
+                write_display_state("report", message, duration=5.0)
+                play_message_async(message)
                 self.send_json({"ok": False, "error": "robot is already running"}, 409)
                 return
             try:

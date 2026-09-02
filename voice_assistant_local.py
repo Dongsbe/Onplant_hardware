@@ -248,15 +248,15 @@ def handle_local_transcript(args: argparse.Namespace, transcript: str) -> None:
         speak_text(args, reply)
         return
 
-    write_display_state("report", "응답 처리 중", duration=8.0)
+    write_display_state("notice", "서버 LLM에 연결하고 있습니다.", duration=8.0)
     try:
         result = post_text_chat(args.server, args.robot_id, args.username, transcript)
         reply = str(result.get("reply") or "응답을 만들지 못했어요.")
-        write_display_state("report", reply, duration=12.0)
+        write_display_state("notice", reply, duration=12.0)
         speak_text(args, reply)
     except requests.RequestException:
-        reply = "서버와 연결할 수 없습니다. 상태 조회와 정지 명령은 사용할 수 있습니다."
-        write_display_state("report", reply, duration=12.0)
+        reply = "서버 연결이 필요합니다.\n상태 확인, 조도 탐색, 정지는 로컬에서 사용할 수 있습니다."
+        write_display_state("notice", reply, duration=12.0)
         speak_text(args, reply)
 
 
@@ -266,14 +266,24 @@ def server_voice_turn(
     phase: str,
     play_intents: set[str] | None = None,
 ) -> dict | None:
+    show_on_display = phase in {"command", "direct"}
+    if show_on_display:
+        write_display_state("notice", "서버 LLM에 연결하고 있습니다.", duration=8.0)
     try:
         result = post_voice(args.server, args.robot_id, args.username, audio_path, phase)
     except requests.RequestException as exc:
         print("voice request failed:", exc)
+        if show_on_display:
+            reply = "서버 연결이 필요합니다.\n상태 확인, 조도 탐색, 정지는 로컬에서 사용할 수 있습니다."
+            write_display_state("notice", reply, duration=12.0)
+            speak_text(args, reply)
         return None
     print("transcript:", result.get("transcript"))
     print("reply:", result.get("reply"))
     print("intent:", result.get("intent"))
+    if show_on_display:
+        reply = str(result.get("reply") or "응답을 만들지 못했어요.")
+        write_display_state("notice", reply, duration=12.0)
     audio_url = result.get("audio_url")
     if audio_url and not args.no_play and (play_intents is None or result.get("intent") in play_intents):
         reply_path = audio_path.parent / "server-reply.mp3"

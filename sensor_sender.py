@@ -4,6 +4,7 @@ import argparse
 import os
 import queue
 import random
+import subprocess
 import threading
 import time
 from typing import Any
@@ -29,6 +30,9 @@ DEFAULT_SERVER_URL = "http://192.168.100.6:5050"
 DEFAULT_ROBOT_ID = "raspbot-a"
 
 DEFAULT_SENSOR_BUS = int(os.getenv("ONPLANT_SENSOR_BUS", "3"))
+DHT_READ_INTERVAL = float(os.getenv("ONPLANT_DHT_READ_INTERVAL", "3"))
+_last_dht_read = 0.0
+_last_dht_values: tuple[float | None, float | None] = (None, None)
 
 BH1750_ADDR = 0x23
 BH1750_CONT_HIGH_RES = 0x10
@@ -98,18 +102,38 @@ def moisture_percent(volts: float, dry_volts: float, wet_volts: float) -> float:
     return round(max(0.0, min(100.0, percent)), 1)
 
 
+def enable_dht_power(gpio: int, settle_seconds: float) -> None:
+    if gpio < 0:
+        return
+    try:
+        subprocess.run(["pinctrl", "set", str(gpio), "op", "dh"], check=True)
+        print(f"DHT power GPIO{gpio}=HIGH")
+        time.sleep(max(0.0, settle_seconds))
+    except (OSError, subprocess.CalledProcessError) as exc:
+        print(f"DHT power setup failed on GPIO{gpio}:", exc)
+
+
 def read_dht11(pin_name: str) -> tuple[float | None, float | None]:
+    global _last_dht_read, _last_dht_values
+
+    now = time.monotonic()
+    if now - _last_dht_read < DHT_READ_INTERVAL and any(value is not None for value in _last_dht_values):
+        return _last_dht_values
+
     if adafruit_dht is None or board is None:
         raise RuntimeError("adafruit_dht or board module is not installed")
 
     pin = getattr(board, pin_name)
-    dht = adafruit_dht.DHT11(pin)
+    dht = adafruit_dht.DHT11(pin, use_pulseio=False)
     try:
         temperature = dht.temperature
         humidity = dht.humidity
         if temperature is None or humidity is None:
-            return None, None
-        return round(float(temperature), 1), round(float(humidity), 1)
+            _last_dht_read = now
+            return _last_dht_values
+        _last_dht_values = (round(float(temperature), 1), round(float(humidity), 1))
+        _last_dht_read = now
+        return _last_dht_values
     finally:
         dht.exit()
 
@@ -236,11 +260,16 @@ def main() -> int:
     parser.add_argument("--lux-mode", choices=["real", "dummy", "none"], default="real")
     parser.add_argument("--dht-mode", choices=["real", "dummy", "none"], default="dummy")
     parser.add_argument("--soil-mode", choices=["real", "dummy", "none"], default="dummy")
-    parser.add_argument("--dht-pin", default="D17")
+    parser.add_argument("--dht-pin", default=os.getenv("ONPLANT_DHT_PIN", "D27"))
+    parser.add_argument("--dht-power-gpio", type=int, default=int(os.getenv("ONPLANT_DHT_POWER_GPIO", "17")))
+    parser.add_argument("--dht-power-settle", type=float, default=float(os.getenv("ONPLANT_DHT_POWER_SETTLE", "5")))
     parser.add_argument("--soil-channel", type=int, choices=[0, 1, 2, 3], default=0)
     parser.add_argument("--dry-volts", type=float, default=3.0)
     parser.add_argument("--wet-volts", type=float, default=1.2)
     args = parser.parse_args()
+
+    if args.dht_mode == "real":
+        enable_dht_power(args.dht_power_gpio, args.dht_power_settle)
 
     bus = smbus.SMBus(args.bus)
     print(f"sensor I2C bus={args.bus}")
