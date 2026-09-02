@@ -118,6 +118,7 @@ EXPLORE_SWEEP_SECONDS = float(os.getenv("ONPLANT_EXPLORE_SWEEP_SECONDS", "5.0"))
 
 EXPLORE_NUDGE_INTERVAL = float(os.getenv("ONPLANT_EXPLORE_NUDGE_INTERVAL", "6.0"))
 EXPLORE_NUDGE_SECONDS = float(os.getenv("ONPLANT_EXPLORE_NUDGE_SECONDS", "0.22"))
+EXPLORE_AUTO_NUDGE = env_bool("ONPLANT_EXPLORE_AUTO_NUDGE", False)
 EXPLORE_BIAS_SWITCH_SECONDS = 8.0
 EXPLORE_PASSAGE_SIDE_LIMIT = 300
 SIDE_TOO_CLOSE_X = float(os.getenv("ONPLANT_SIDE_TOO_CLOSE_MM", "260"))
@@ -772,7 +773,7 @@ def choose_explore_clear_motion(scan_info, now):
     if now < explore_nudge_until:
         return explore_nudge_motion
 
-    side_nudge_ready = now - explore_last_nudge >= 1.2
+    side_nudge_ready = now - explore_last_nudge >= EXPLORE_NUDGE_INTERVAL
 
     field_motion = field_guidance_motion(scan_info, now)
     if field_motion is not None:
@@ -813,17 +814,8 @@ def choose_explore_clear_motion(scan_info, now):
         explore_nudge_until = now + min(EXPLORE_NUDGE_SECONDS, 0.25)
         return "RIGHT"
 
-    if side_nudge_ready and right_count >= 2 and right_score < SIDE_SOFT_CLOSE_X and left_score - right_score > SIDE_BALANCE_DEADBAND:
-        explore_last_nudge = now
-        explore_nudge_motion = "LEFT"
-        explore_nudge_until = now + min(EXPLORE_NUDGE_SECONDS, 0.25)
-        return "LEFT"
-
-    if side_nudge_ready and left_count >= 2 and left_score < SIDE_SOFT_CLOSE_X and right_score - left_score > SIDE_BALANCE_DEADBAND:
-        explore_last_nudge = now
-        explore_nudge_motion = "RIGHT"
-        explore_nudge_until = now + min(EXPLORE_NUDGE_SECONDS, 0.25)
-        return "RIGHT"
+    if not EXPLORE_AUTO_NUDGE:
+        return "FORWARD"
 
     if now - explore_last_nudge < EXPLORE_NUDGE_INTERVAL:
         return "FORWARD"
