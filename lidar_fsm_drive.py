@@ -20,6 +20,28 @@ PORT = "/dev/ttyUSB0"
 LIDAR_FRONT_ANGLE = -4.0
 LIDAR_MIRROR_ANGLE = True
 
+
+def patch_rplidar_health_compat():
+    original_get_health = RPLidar.get_health
+
+    if getattr(original_get_health, "_onplant_compat", False):
+        return
+
+    def compatible_get_health(self):
+        health = original_get_health(self)
+        if isinstance(health, (tuple, list)) and len(health) > 2:
+            for index in range(len(health) - 1):
+                if isinstance(health[index], str) and isinstance(health[index + 1], int):
+                    return health[index], health[index + 1]
+            return health[0], health[1]
+        return health
+
+    compatible_get_health._onplant_compat = True
+    RPLidar.get_health = compatible_get_health
+
+
+patch_rplidar_health_compat()
+
 def env_bool(name, default=False):
     value = os.getenv(name)
     if value is None:
