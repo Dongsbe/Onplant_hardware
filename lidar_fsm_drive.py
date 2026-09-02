@@ -121,7 +121,8 @@ EXPLORE_NUDGE_INTERVAL = float(os.getenv("ONPLANT_EXPLORE_NUDGE_INTERVAL", "6.0"
 EXPLORE_NUDGE_SECONDS = float(os.getenv("ONPLANT_EXPLORE_NUDGE_SECONDS", "0.22"))
 EXPLORE_AUTO_NUDGE = env_bool("ONPLANT_EXPLORE_AUTO_NUDGE", False)
 EXPLORE_BRANCH_ENABLED = env_bool("ONPLANT_EXPLORE_BRANCH_ENABLED", True)
-EXPLORE_LIGHT_STALL_SECONDS = float(os.getenv("ONPLANT_EXPLORE_LIGHT_STALL_SECONDS", "6.0"))
+EXPLORE_BRANCH_DELAY_SECONDS = float(os.getenv("ONPLANT_EXPLORE_BRANCH_DELAY_SECONDS", "4.0"))
+EXPLORE_BRANCH_INTERVAL = float(os.getenv("ONPLANT_EXPLORE_BRANCH_INTERVAL", "5.0"))
 EXPLORE_BRANCH_OPEN_MM = float(os.getenv("ONPLANT_EXPLORE_BRANCH_OPEN_MM", "450"))
 EXPLORE_BRANCH_SECONDS = float(os.getenv("ONPLANT_EXPLORE_BRANCH_SECONDS", "0.28"))
 EXPLORE_BIAS_SWITCH_SECONDS = 8.0
@@ -484,6 +485,16 @@ def choose_branch_turn(scan_info):
     if right_open:
         return "RIGHT"
     return None
+
+
+def should_try_branch(now):
+    if not EXPLORE_BRANCH_ENABLED:
+        return False
+    if elapsed_from_start(now) < EXPLORE_BRANCH_DELAY_SECONDS:
+        return False
+    if now - explore_last_nudge < EXPLORE_BRANCH_INTERVAL:
+        return False
+    return True
 
 
 def choose_escape_turn(points):
@@ -872,12 +883,7 @@ def choose_explore_clear_motion(scan_info, now):
         return "RIGHT"
 
     if not EXPLORE_AUTO_NUDGE:
-        if (
-            EXPLORE_BRANCH_ENABLED
-            and now - explore_last_nudge >= EXPLORE_NUDGE_INTERVAL
-            and best_motion_time > 0
-            and now - best_motion_time >= EXPLORE_LIGHT_STALL_SECONDS
-        ):
+        if should_try_branch(now):
             branch_turn = choose_branch_turn(scan_info)
             if branch_turn:
                 explore_last_nudge = now
@@ -1269,6 +1275,12 @@ try:
         f"USE_SENSOR_CACHE={USE_SENSOR_CACHE} BH1750_BUS={BH1750_BUS}"
     )
     print(f"TARGET_LUX_RANGE={TARGET_LUX_MIN:.0f}-{TARGET_LUX_MAX:.0f} center={TARGET_LUX:.0f}")
+    print(
+        f"EXPLORE_BRANCH enabled={EXPLORE_BRANCH_ENABLED} "
+        f"delay={EXPLORE_BRANCH_DELAY_SECONDS:.1f}s "
+        f"interval={EXPLORE_BRANCH_INTERVAL:.1f}s "
+        f"turn={EXPLORE_BRANCH_SECONDS:.2f}s open={EXPLORE_BRANCH_OPEN_MM:.0f}mm"
+    )
     print(f"LIDAR_POST={LIDAR_POST_ENABLED} url={ONPLANT_SERVER_URL} robot={ONPLANT_ROBOT_ID}")
     print("=" * 50)
 
