@@ -120,6 +120,10 @@ EXPLORE_SWEEP_SECONDS = float(os.getenv("ONPLANT_EXPLORE_SWEEP_SECONDS", "5.0"))
 EXPLORE_NUDGE_INTERVAL = float(os.getenv("ONPLANT_EXPLORE_NUDGE_INTERVAL", "6.0"))
 EXPLORE_NUDGE_SECONDS = float(os.getenv("ONPLANT_EXPLORE_NUDGE_SECONDS", "0.22"))
 EXPLORE_AUTO_NUDGE = env_bool("ONPLANT_EXPLORE_AUTO_NUDGE", False)
+EXPLORE_BRANCH_ENABLED = env_bool("ONPLANT_EXPLORE_BRANCH_ENABLED", True)
+EXPLORE_LIGHT_STALL_SECONDS = float(os.getenv("ONPLANT_EXPLORE_LIGHT_STALL_SECONDS", "6.0"))
+EXPLORE_BRANCH_OPEN_MM = float(os.getenv("ONPLANT_EXPLORE_BRANCH_OPEN_MM", "450"))
+EXPLORE_BRANCH_SECONDS = float(os.getenv("ONPLANT_EXPLORE_BRANCH_SECONDS", "0.28"))
 EXPLORE_BIAS_SWITCH_SECONDS = 8.0
 EXPLORE_PASSAGE_SIDE_LIMIT = 300
 SIDE_TOO_CLOSE_X = float(os.getenv("ONPLANT_SIDE_TOO_CLOSE_MM", "260"))
@@ -191,6 +195,7 @@ dummy_sensor_started = time.monotonic()
 explore_last_nudge = 0.0
 explore_nudge_until = 0.0
 explore_nudge_motion = "FORWARD"
+last_explore_branch_turn = None
 last_lidar_post = 0.0
 last_lidar_post_error = 0.0
 lidar_post_ok_printed = False
@@ -457,6 +462,28 @@ def avoid_blocked_turn(turn, left_score, right_score):
 
 def safe_turn_from_scan(turn, scan_info):
     return avoid_blocked_turn(turn, scan_info["left_score"], scan_info["right_score"])
+
+
+def choose_branch_turn(scan_info):
+    left_score = scan_info["left_score"]
+    right_score = scan_info["right_score"]
+    left_open = left_score >= EXPLORE_BRANCH_OPEN_MM
+    right_open = right_score >= EXPLORE_BRANCH_OPEN_MM
+
+    if left_open and right_open:
+        if abs(left_score - right_score) > SIDE_BALANCE_DEADBAND:
+            return "LEFT" if left_score > right_score else "RIGHT"
+        if last_explore_branch_turn == "LEFT":
+            return "RIGHT"
+        if last_explore_branch_turn == "RIGHT":
+            return "LEFT"
+        return random.choice(["LEFT", "RIGHT"])
+
+    if left_open:
+        return "LEFT"
+    if right_open:
+        return "RIGHT"
+    return None
 
 
 def choose_escape_turn(points):
@@ -789,7 +816,7 @@ def field_guidance_motion(scan_info, now):
 
 
 def choose_explore_clear_motion(scan_info, now):
-    global explore_last_nudge, explore_nudge_until, explore_nudge_motion
+    global explore_last_nudge, explore_nudge_until, explore_nudge_motion, last_explore_branch_turn
 
     if scan_info["emergency"] or scan_info["danger"] or scan_info["front_blocked"]:
         return None
@@ -845,6 +872,19 @@ def choose_explore_clear_motion(scan_info, now):
         return "RIGHT"
 
     if not EXPLORE_AUTO_NUDGE:
+        if (
+            EXPLORE_BRANCH_ENABLED
+            and now - explore_last_nudge >= EXPLORE_NUDGE_INTERVAL
+            and best_motion_time > 0
+            and now - best_motion_time >= EXPLORE_LIGHT_STALL_SECONDS
+        ):
+            branch_turn = choose_branch_turn(scan_info)
+            if branch_turn:
+                explore_last_nudge = now
+                last_explore_branch_turn = branch_turn
+                explore_nudge_motion = safe_turn_from_scan(branch_turn, scan_info)
+                explore_nudge_until = now + EXPLORE_BRANCH_SECONDS
+                return explore_nudge_motion
         return "FORWARD"
 
     if now - explore_last_nudge < EXPLORE_NUDGE_INTERVAL:
