@@ -1303,6 +1303,10 @@ try:
         f"interval={EXPLORE_BRANCH_INTERVAL:.1f}s "
         f"turn={EXPLORE_BRANCH_SECONDS:.2f}s open={EXPLORE_BRANCH_OPEN_MM:.0f}mm"
     )
+    print(
+        f"DRIVE_SPEED forward={controller.forward_speed} "
+        f"turn={controller.turn_speed} backward={controller.backward_speed}"
+    )
     print(f"LIDAR_POST={LIDAR_POST_ENABLED} url={ONPLANT_SERVER_URL} robot={ONPLANT_ROBOT_ID}")
     print("=" * 50)
 
