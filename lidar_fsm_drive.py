@@ -126,6 +126,7 @@ SIDE_BALANCE_DEADBAND = 90
 TURN_SPACE_MIN_X = 280
 TRAPPED_BACKUP_SECONDS = 0.45
 TRAPPED_FORWARD_SECONDS = 0.30
+TRAPPED_ESCAPE_SECONDS = float(os.getenv("ONPLANT_TRAPPED_ESCAPE_SECONDS", "0.35"))
 AVOID_REPEAT_BACKUP_COUNT = 3
 AVOID_REPEAT_ESCAPE_COUNT = 5
 
@@ -889,8 +890,9 @@ def fsm_step(scan_info, now):
                     enter_state(State.BACKUP, TRAPPED_BACKUP_SECONDS)
                     set_motion("BACKWARD", force=True)
                     return "TRAPPED_BACKUP", front_gap
-                set_motion("STOP", force=True)
-                return "TRAPPED_STOP", front_gap
+                enter_state(State.ESCAPE, TRAPPED_ESCAPE_SECONDS)
+                set_motion(avoid_turn, force=True)
+                return "TRAPPED_ESCAPE", front_gap
 
             if scan_info["rear_blocked"] or not scan_info["danger"]:
                 enter_state(State.AVOID, TURN_PULSE_SECONDS)
@@ -1036,8 +1038,9 @@ def fsm_step(scan_info, now):
                     enter_state(State.BACKUP, TRAPPED_BACKUP_SECONDS)
                     set_motion("BACKWARD", force=True)
                     return "TRAPPED_BACKUP_MORE", front_gap
-                set_motion("STOP", force=True)
-                return "TRAPPED_STOP", front_gap
+                enter_state(State.ESCAPE, TRAPPED_ESCAPE_SECONDS)
+                set_motion(avoid_turn, force=True)
+                return "TRAPPED_ESCAPE", front_gap
 
             if resume_state == State.RETURN_TO_BEST:
                 enter_state(State.RETURN_TO_BEST)
@@ -1072,6 +1075,16 @@ def print_status(label, scan_info, front_gap):
         nearest_text = f"x={nearest[2]:.0f} y={nearest[3]:.0f} gap={front_gap:.0f}"
     else:
         nearest_text = "front=clear"
+    flags = []
+    if scan_info["front_blocked"]:
+        flags.append("front_blocked")
+    if scan_info["danger"]:
+        flags.append("danger")
+    if scan_info["emergency"]:
+        flags.append("emergency")
+    if scan_info["rear_blocked"]:
+        flags.append("rear_blocked")
+    flags_text = "flags=" + ",".join(flags or ["clear"])
 
     elapsed = elapsed_from_start(time.monotonic())
     best_elapsed = best_lux_time - explore_started if explore_started > 0 else 0.0
@@ -1084,7 +1097,7 @@ def print_status(label, scan_info, front_gap):
         f"BEST={best_lux:.1f}@{best_elapsed:.1f}s ERR={lux_error:.1f} "
         f"POSE=({pose_x:.0f},{pose_y:.0f}) {heading_label()} "
         f"BEST_COORD=({best_x:.0f},{best_y:.0f}) BLOCKED={len(blocked_map)} "
-        f"{nearest_text} "
+        f"{nearest_text} {flags_text} "
         f"L={scan_info['left_score']:.0f} R={scan_info['right_score']:.0f} "
         f"front_points={len(scan_info['front'])}"
     )
