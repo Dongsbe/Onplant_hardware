@@ -438,10 +438,33 @@ def choose_open_turn(points):
     return "RIGHT", left_score, right_score
 
 
+def opposite_turn(turn):
+    return "RIGHT" if turn == "LEFT" else "LEFT"
+
+
+def turn_space(turn, left_score, right_score):
+    return left_score if turn == "LEFT" else right_score
+
+
+def avoid_blocked_turn(turn, left_score, right_score):
+    if turn == "RIGHT" and right_score < SIDE_SOFT_CLOSE_X and left_score > right_score + SIDE_BALANCE_DEADBAND:
+        return "LEFT"
+    if turn == "LEFT" and left_score < SIDE_SOFT_CLOSE_X and right_score > left_score + SIDE_BALANCE_DEADBAND:
+        return "RIGHT"
+    return turn
+
+
+def safe_turn_from_scan(turn, scan_info):
+    return avoid_blocked_turn(turn, scan_info["left_score"], scan_info["right_score"])
+
+
 def choose_escape_turn(points):
     turn, left_score, right_score = choose_open_turn(points)
     if turn == last_turn and turn_repeat_count >= 2:
-        turn = "RIGHT" if turn == "LEFT" else "LEFT"
+        alternate = opposite_turn(turn)
+        if turn_space(alternate, left_score, right_score) > turn_space(turn, left_score, right_score) + SIDE_BALANCE_DEADBAND:
+            turn = alternate
+    turn = avoid_blocked_turn(turn, left_score, right_score)
     return turn, left_score, right_score
 
 
@@ -771,6 +794,8 @@ def choose_explore_clear_motion(scan_info, now):
         return None
 
     if now < explore_nudge_until:
+        if explore_nudge_motion in ("LEFT", "RIGHT"):
+            return safe_turn_from_scan(explore_nudge_motion, scan_info)
         return explore_nudge_motion
 
     side_nudge_ready = now - explore_last_nudge >= EXPLORE_NUDGE_INTERVAL
@@ -781,8 +806,12 @@ def choose_explore_clear_motion(scan_info, now):
             return "FORWARD"
         explore_last_nudge = now
         if field_motion in ("LEFT", "RIGHT"):
-            explore_nudge_motion = field_motion
-            explore_nudge_until = now + min(EXPLORE_NUDGE_SECONDS, 0.25)
+            field_motion = safe_turn_from_scan(field_motion, scan_info)
+            if field_motion in ("LEFT", "RIGHT"):
+                explore_nudge_motion = field_motion
+                explore_nudge_until = now + min(EXPLORE_NUDGE_SECONDS, 0.25)
+                return field_motion
+            return "FORWARD"
         return field_motion
 
     front_points = len(scan_info["front"])
