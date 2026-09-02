@@ -1140,8 +1140,9 @@ body {
     function updateNotice(data) {
       const message = data.message || "응답하고 있습니다";
       const offline = message.includes("서버 연결") || message.includes("연결할 수 없습니다");
+      const pending = message.includes("연결하고 있습니다") || message.includes("준비하고 있습니다") || message.includes("처리하고 있습니다");
       document.getElementById("noticeIcon").textContent = offline ? "!" : "...";
-      document.getElementById("noticeTitle").textContent = offline ? "서버 연결이 필요합니다" : "응답하고 있습니다";
+      document.getElementById("noticeTitle").textContent = offline ? "서버 연결이 필요합니다" : pending ? "응답 준비 중" : "동스비 응답";
       document.getElementById("noticeMessage").textContent = data.report_message || message;
     }
     async function refresh() { try { const res = await fetch("/api/status?ts=" + Date.now(), { cache: "no-store" }); const data = await res.json(); lastStatus = data; if (Date.now() >= forcedScreenUntil && !menuOpen && !settingsOpen) show(mapScreen(data)); const net = document.getElementById("netState"); const serverOnline = Boolean(data.server_online); net.textContent = serverOnline ? "ONLINE" : "OFFLINE"; net.className = "status-pill" + (serverOnline ? "" : " offline"); setMetric("dTemp", data.temperature, "C", 1); setMetric("dHum", data.humidity, "%"); setMetric("dLux", data.lux, " lux"); setMetric("dSoil", data.soil_moisture, "%"); document.getElementById("reportTitle").textContent = `현재 상태: ${data.sub_message || "확인 중"}`; document.getElementById("reportMessage").textContent = data.report_message || data.message || "센서 데이터를 확인하고 있습니다."; document.getElementById("reportRecommend").textContent = data.recommendation || "현재 환경을 유지해 주세요."; updateNotice(data); } catch { if (!menuOpen && !settingsOpen) show("idle"); } }

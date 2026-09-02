@@ -47,7 +47,7 @@ class RobotMain:
         self.local_command_file = command_file()
         self.local_command_offset = 0
         self.last_key_read = 0.0
-        self.command_timeout = max(0.1, float(os.getenv("ONPLANT_COMMAND_TIMEOUT", "0.25")))
+        self.command_timeout = max(0.1, float(os.getenv("ONPLANT_COMMAND_TIMEOUT", "2.0")))
         self.running = True
 
     def start(self) -> None:
@@ -228,6 +228,20 @@ class RobotMain:
         except (OSError, TimeoutError, urllib.error.URLError) as exc:
             print("command poll failed:", exc)
             return
+
+        command_ids: list[int] = []
+        for command in commands:
+            try:
+                command_ids.append(int(command.get("id", 0)))
+            except (TypeError, ValueError):
+                continue
+        if command_ids and max(command_ids) < self.last_command_id:
+            print(
+                "command id sequence reset:",
+                f"last={self.last_command_id}",
+                f"server_max={max(command_ids)}",
+            )
+            self.last_command_id = 0
 
         for command in commands:
             self.handle_command(command)
