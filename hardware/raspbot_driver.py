@@ -20,16 +20,16 @@ class RaspbotDriver:
             self.set_motor(motor_id, 1, speed)
 
     def rotate_left(self, speed):
-        self.set_motor(0, 1, speed)
-        self.set_motor(1, 1, speed)
-        self.set_motor(2, 0, speed)
-        self.set_motor(3, 0, speed)
-
-    def rotate_right(self, speed):
         self.set_motor(0, 0, speed)
         self.set_motor(1, 0, speed)
         self.set_motor(2, 1, speed)
         self.set_motor(3, 1, speed)
+
+    def rotate_right(self, speed):
+        self.set_motor(0, 1, speed)
+        self.set_motor(1, 1, speed)
+        self.set_motor(2, 0, speed)
+        self.set_motor(3, 0, speed)
 
     def stop(self):
         for motor_id in self.MOTOR_IDS:

@@ -71,8 +71,9 @@ SIDE_SCORE_DEADBAND = 60
 POINT_LIMIT = int(os.getenv("ONPLANT_LIDAR_POINT_LIMIT", "3"))
 THIN_POINT_X = LIDAR_TO_FRONT_AXLE + SAFETY_MARGIN + float(os.getenv("ONPLANT_THIN_POINT_MM", "120"))
 
-BACKWARD_X = 180
-BACKWARD_WIDTH = 120
+BACKWARD_X = float(os.getenv("ONPLANT_BACKWARD_WARN_MM", "120"))
+BACKWARD_WIDTH = float(os.getenv("ONPLANT_BACKWARD_WIDTH_MM", "80"))
+REAR_POINT_LIMIT = int(os.getenv("ONPLANT_REAR_POINT_LIMIT", "4"))
 
 BH1750_ADDR = 0x23
 BH1750_CONT_HIGH_RES = 0x10
@@ -399,7 +400,7 @@ def get_rear_blocked(points):
     for angle, distance, x, y in points:
         if x < 0 and abs(x) <= BACKWARD_X and -BACKWARD_WIDTH <= y <= BACKWARD_WIDTH:
             count += 1
-    return count >= 2
+    return count >= REAR_POINT_LIMIT
 
 
 def get_side_scores(points):
