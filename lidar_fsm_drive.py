@@ -116,8 +116,8 @@ FIELD_FRONT_Y = float(os.getenv("ONPLANT_FIELD_FRONT_Y", "1800"))
 FIELD_MARGIN_MM = float(os.getenv("ONPLANT_FIELD_MARGIN_MM", "180"))
 EXPLORE_SWEEP_SECONDS = float(os.getenv("ONPLANT_EXPLORE_SWEEP_SECONDS", "5.0"))
 
-EXPLORE_NUDGE_INTERVAL = 2.8
-EXPLORE_NUDGE_SECONDS = 0.45
+EXPLORE_NUDGE_INTERVAL = float(os.getenv("ONPLANT_EXPLORE_NUDGE_INTERVAL", "6.0"))
+EXPLORE_NUDGE_SECONDS = float(os.getenv("ONPLANT_EXPLORE_NUDGE_SECONDS", "0.22"))
 EXPLORE_BIAS_SWITCH_SECONDS = 8.0
 EXPLORE_PASSAGE_SIDE_LIMIT = 300
 SIDE_TOO_CLOSE_X = float(os.getenv("ONPLANT_SIDE_TOO_CLOSE_MM", "320"))
@@ -759,12 +759,6 @@ def field_guidance_motion(scan_info, now):
     if pose_x >= FIELD_RIGHT_X - FIELD_MARGIN_MM:
         return "LEFT"
 
-    elapsed = elapsed_from_start(now)
-    phase = int(elapsed // EXPLORE_SWEEP_SECONDS) % 4
-    if phase == 1:
-        return "RIGHT"
-    if phase == 3:
-        return "LEFT"
     return None
 
 
@@ -777,12 +771,16 @@ def choose_explore_clear_motion(scan_info, now):
     if now < explore_nudge_until:
         return explore_nudge_motion
 
+    side_nudge_ready = now - explore_last_nudge >= 1.2
+
     field_motion = field_guidance_motion(scan_info, now)
     if field_motion is not None:
+        if field_motion in ("LEFT", "RIGHT") and not side_nudge_ready:
+            return "FORWARD"
         explore_last_nudge = now
         if field_motion in ("LEFT", "RIGHT"):
             explore_nudge_motion = field_motion
-            explore_nudge_until = now + min(EXPLORE_NUDGE_SECONDS, 0.35)
+            explore_nudge_until = now + min(EXPLORE_NUDGE_SECONDS, 0.25)
         return field_motion
 
     front_points = len(scan_info["front"])
@@ -802,20 +800,28 @@ def choose_explore_clear_motion(scan_info, now):
 
     # Side-only obstacles do not always enter the front lane. Handle them here
     # so the robot does not keep spinning or scraping near a box/wall.
-    if right_count >= 2 and right_score < SIDE_TOO_CLOSE_X:
+    if side_nudge_ready and right_count >= 2 and right_score < SIDE_TOO_CLOSE_X:
         explore_last_nudge = now
+        explore_nudge_motion = "LEFT"
+        explore_nudge_until = now + min(EXPLORE_NUDGE_SECONDS, 0.25)
         return "LEFT"
 
-    if left_count >= 2 and left_score < SIDE_TOO_CLOSE_X:
+    if side_nudge_ready and left_count >= 2 and left_score < SIDE_TOO_CLOSE_X:
         explore_last_nudge = now
+        explore_nudge_motion = "RIGHT"
+        explore_nudge_until = now + min(EXPLORE_NUDGE_SECONDS, 0.25)
         return "RIGHT"
 
-    if right_count >= 2 and right_score < SIDE_SOFT_CLOSE_X and left_score - right_score > SIDE_BALANCE_DEADBAND:
+    if side_nudge_ready and right_count >= 2 and right_score < SIDE_SOFT_CLOSE_X and left_score - right_score > SIDE_BALANCE_DEADBAND:
         explore_last_nudge = now
+        explore_nudge_motion = "LEFT"
+        explore_nudge_until = now + min(EXPLORE_NUDGE_SECONDS, 0.25)
         return "LEFT"
 
-    if left_count >= 2 and left_score < SIDE_SOFT_CLOSE_X and right_score - left_score > SIDE_BALANCE_DEADBAND:
+    if side_nudge_ready and left_count >= 2 and left_score < SIDE_SOFT_CLOSE_X and right_score - left_score > SIDE_BALANCE_DEADBAND:
         explore_last_nudge = now
+        explore_nudge_motion = "RIGHT"
+        explore_nudge_until = now + min(EXPLORE_NUDGE_SECONDS, 0.25)
         return "RIGHT"
 
     if now - explore_last_nudge < EXPLORE_NUDGE_INTERVAL:
