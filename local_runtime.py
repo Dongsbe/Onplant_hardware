@@ -150,13 +150,14 @@ def read_sensor_cache(max_age: float = 30.0) -> dict[str, Any]:
 
 def write_display_state(screen: str, message: str = "", duration: float = 12.0) -> None:
     now = time.time()
+    timed_screens = {"report", "notice"}
     atomic_write_json(
         display_file(),
         {
             "screen": screen,
             "message": message,
             "updated_at": now,
-            "report_until": now + duration if screen == "report" else None,
+            "report_until": now + duration if screen in timed_screens else None,
         },
     )
 
