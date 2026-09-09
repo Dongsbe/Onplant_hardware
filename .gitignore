@@ -17,6 +17,7 @@ venv/
 *.log
 nohup.out
 calibration_*.csv
+autonomy_learning_log.txt
 
 # Runtime / local cache
 *.db

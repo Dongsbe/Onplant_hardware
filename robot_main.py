@@ -194,29 +194,37 @@ class RobotMain:
             return
 
         direction = "X" if course == "285" else "Y"
-        log_path = self.project_dir / f"calibration_{course}.csv"
-        command = [
-            sys.executable,
-            str(self.project_dir / "straight_calibration.py"),
-            "--course",
-            course,
-            "--direction",
-            direction,
-            "--log",
-            str(log_path),
-        ]
+        max_distance = "2850" if course == "285" else "3250"
+        log_path = self.project_dir / "autonomy_learning_log.txt"
+        env = os.environ.copy()
+        env["ONPLANT_SERVER_URL"] = self.server
+        env["ONPLANT_ROBOT_ID"] = self.robot_id
+        env["ONPLANT_AUTO_START"] = "1"
+        env["ONPLANT_DISABLE_IR"] = "1"
+        env["ONPLANT_CONTINUOUS_LEARNING"] = "1"
+        env["ONPLANT_LEARNING_LOG_ENABLED"] = "1"
+        env["ONPLANT_LEARNING_COURSE"] = course
+        env["ONPLANT_LEARNING_AXIS"] = direction
+        env["ONPLANT_LEARNING_MAX_MM"] = max_distance
+        env["ONPLANT_LEARNING_LOG"] = str(log_path)
+        env.setdefault("ONPLANT_SENSOR_BUS", "3")
+        env.setdefault("ONPLANT_BH1750_BUS", "3")
+        env.setdefault("ONPLANT_DUMMY_LUX", "0")
+        env.setdefault("ONPLANT_DUMMY_SOIL", "0")
+        env.setdefault("ONPLANT_USE_SENSOR_CACHE", "1")
+        command = [sys.executable, str(self.project_dir / "straight_calibration.py")]
         print(
-            "start straight calibration:",
+            "start continuous testbed learning:",
             f"course={course}cm",
             f"direction={direction}",
             f"source={source}",
         )
-        self.drive_process = subprocess.Popen(command, cwd=str(self.project_dir), env=os.environ.copy())
-        write_runtime_state(True, f"CALIBRATION_{course}", "FORWARD")
+        self.drive_process = subprocess.Popen(command, cwd=str(self.project_dir), env=env)
+        write_runtime_state(True, f"LEARNING_{course}", "START")
         self.post_move_log(
             "MAIN",
-            "START_STRAIGHT_CALIBRATION",
-            f"course={course}cm direction={direction} source={source}",
+            "START_TESTBED_LEARNING",
+            f"course={course}cm axis={direction} continuous=1 source={source}",
         )
 
     def stop_drive(self, source: str) -> None:
