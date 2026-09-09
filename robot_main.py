@@ -172,6 +172,53 @@ class RobotMain:
             self.play_local_tts_async(message)
         self.post_move_log("MAIN", "START_LIGHT_SEARCH", f"source={source}")
 
+    def start_straight_calibration(self, course: str, source: str) -> None:
+        if course not in {"285", "325"}:
+            print("invalid straight calibration course ignored:", course)
+            self.post_move_log(
+                "MAIN",
+                "INVALID_STRAIGHT_CALIBRATION",
+                f"course={course} source={source}",
+            )
+            return
+        if self.drive_process and self.drive_process.poll() is None:
+            print("drive process already running; calibration ignored")
+            return
+        if self.args.dry_run:
+            print("DRY RUN: straight calibration ignored:", course, source)
+            self.post_move_log(
+                "MAIN",
+                "DRY_RUN_STRAIGHT_CALIBRATION",
+                f"course={course} source={source}",
+            )
+            return
+
+        direction = "X" if course == "285" else "Y"
+        log_path = self.project_dir / f"calibration_{course}.csv"
+        command = [
+            sys.executable,
+            str(self.project_dir / "straight_calibration.py"),
+            "--course",
+            course,
+            "--direction",
+            direction,
+            "--log",
+            str(log_path),
+        ]
+        print(
+            "start straight calibration:",
+            f"course={course}cm",
+            f"direction={direction}",
+            f"source={source}",
+        )
+        self.drive_process = subprocess.Popen(command, cwd=str(self.project_dir), env=os.environ.copy())
+        write_runtime_state(True, f"CALIBRATION_{course}", "FORWARD")
+        self.post_move_log(
+            "MAIN",
+            "START_STRAIGHT_CALIBRATION",
+            f"course={course}cm direction={direction} source={source}",
+        )
+
     def stop_drive(self, source: str) -> None:
         if self.args.dry_run:
             print("DRY RUN: stop requested:", source)
@@ -216,9 +263,12 @@ class RobotMain:
         self.last_command_id = command_id
 
         name = str(command.get("command", ""))
+        value = str(command.get("value", "")).strip()
         print(f"server command id={command_id} command={name}")
         if name == "start_light_search":
             self.start_light_search(f"server-command-{command_id}")
+        elif name == "start_straight_calibration":
+            self.start_straight_calibration(value, f"server-command-{command_id}")
         elif name == "stop":
             self.stop_drive(f"server-command-{command_id}")
         elif name == "show_status":
@@ -260,9 +310,12 @@ class RobotMain:
     def handle_local_command(self, command: dict) -> None:
         name = str(command.get("command", ""))
         source = str(command.get("source", "local"))
+        value = str(command.get("value", "")).strip()
         print(f"local command command={name} source={source}")
         if name == "start_light_search":
             self.start_light_search(source)
+        elif name == "start_straight_calibration":
+            self.start_straight_calibration(value, source)
         elif name == "stop":
             self.stop_drive(source)
         elif name == "show_status":
