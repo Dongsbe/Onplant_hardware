@@ -1155,6 +1155,14 @@ def log_learning_sample(scan_info, label, now):
     learning_last_log_at = now
     learning_samples += 1
     nearest = scan_info["nearest"]
+    obstacle_x = None
+    obstacle_y = None
+    if nearest:
+        heading_rad = math.radians(heading_deg)
+        forward_mm = nearest[2]
+        lateral_mm = nearest[3]
+        obstacle_x = pose_x + math.sin(heading_rad) * forward_mm + math.cos(heading_rad) * lateral_mm
+        obstacle_y = pose_y + math.cos(heading_rad) * forward_mm - math.sin(heading_rad) * lateral_mm
     phase, remaining = runtime_phase(now)
     append_learning_record(
         {
@@ -1178,8 +1186,11 @@ def log_learning_sample(scan_info, label, now):
             "best_lux": round(best_lux, 1) if best_lux >= 0 else None,
             "best_x": round(best_x, 1),
             "best_y": round(best_y, 1),
+            "front_range_mm": round(nearest[1], 1) if nearest else None,
             "front_distance_mm": round(nearest[2], 1) if nearest else None,
             "front_lateral_mm": round(nearest[3], 1) if nearest else None,
+            "obstacle_estimated_x": round(obstacle_x, 1) if obstacle_x is not None else None,
+            "obstacle_estimated_y": round(obstacle_y, 1) if obstacle_y is not None else None,
             "left_distance_mm": round(scan_info["left_score"], 1),
             "right_distance_mm": round(scan_info["right_score"], 1),
             "front_points": len(scan_info["front"]),
