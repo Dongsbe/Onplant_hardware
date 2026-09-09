@@ -2,7 +2,10 @@ import argparse
 import os
 import time
 
-import smbus
+try:
+    import smbus
+except ImportError:
+    import smbus2 as smbus
 
 
 DEFAULT_SENSOR_BUS = int(os.getenv("ONPLANT_SENSOR_BUS", "3"))

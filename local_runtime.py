@@ -37,6 +37,93 @@ WAKE_ALIASES = {
     "둥시비",
 }
 
+CHOSEONG = (
+    "ㄱ",
+    "ㄲ",
+    "ㄴ",
+    "ㄷ",
+    "ㄸ",
+    "ㄹ",
+    "ㅁ",
+    "ㅂ",
+    "ㅃ",
+    "ㅅ",
+    "ㅆ",
+    "ㅇ",
+    "ㅈ",
+    "ㅉ",
+    "ㅊ",
+    "ㅋ",
+    "ㅌ",
+    "ㅍ",
+    "ㅎ",
+)
+JUNGSEONG = (
+    "ㅏ",
+    "ㅐ",
+    "ㅑ",
+    "ㅒ",
+    "ㅓ",
+    "ㅔ",
+    "ㅕ",
+    "ㅖ",
+    "ㅗ",
+    "ㅘ",
+    "ㅙ",
+    "ㅚ",
+    "ㅛ",
+    "ㅜ",
+    "ㅝ",
+    "ㅞ",
+    "ㅟ",
+    "ㅠ",
+    "ㅡ",
+    "ㅢ",
+    "ㅣ",
+)
+JONGSEONG = (
+    "",
+    "ㄱ",
+    "ㄲ",
+    "ㄳ",
+    "ㄴ",
+    "ㄵ",
+    "ㄶ",
+    "ㄷ",
+    "ㄹ",
+    "ㄺ",
+    "ㄻ",
+    "ㄼ",
+    "ㄽ",
+    "ㄾ",
+    "ㄿ",
+    "ㅀ",
+    "ㅁ",
+    "ㅂ",
+    "ㅄ",
+    "ㅅ",
+    "ㅆ",
+    "ㅇ",
+    "ㅈ",
+    "ㅊ",
+    "ㅋ",
+    "ㅌ",
+    "ㅍ",
+    "ㅎ",
+)
+PHONETIC_GROUPS = (
+    {"ㅡ", "ㅜ"},
+    {"ㅗ", "ㅜ"},
+    {"ㅐ", "ㅔ"},
+    {"ㅂ", "ㅍ"},
+    {"ㄱ", "ㅋ"},
+    {"ㄷ", "ㅌ"},
+    {"ㅈ", "ㅊ"},
+    {"ㅅ", "ㅆ"},
+    {"ㄴ", "ㅇ"},
+    {"ㅁ", "ㅂ"},
+)
+
 
 def command_file() -> Path:
     return Path(os.getenv("ONPLANT_LOCAL_COMMAND_FILE", DEFAULT_COMMAND_FILE))
@@ -59,11 +146,119 @@ def normalize_text(value: object) -> str:
     return re.sub(r"[^0-9a-z가-힣]+", "", text)
 
 
+def wake_name() -> str:
+    return normalize_text(os.getenv("ONPLANT_WAKE_NAME", "동스비")) or "동스비"
+
+
+def wake_similarity_threshold() -> float:
+    try:
+        return float(os.getenv("ONPLANT_WAKE_SIMILARITY", "0.80"))
+    except ValueError:
+        return 0.80
+
+
+def wake_max_length_diff() -> int:
+    try:
+        return int(os.getenv("ONPLANT_WAKE_MAX_LENGTH_DIFF", "1"))
+    except ValueError:
+        return 1
+
+
+def wake_phrases() -> set[str]:
+    names = {wake_name(), *WAKE_ALIASES}
+    phrases: set[str] = set()
+    for name in names:
+        if not name:
+            continue
+        phrases.add(name)
+        phrases.add(f"{name}야")
+        phrases.add(f"{name}아")
+    return phrases
+
+
+def strip_wake_suffix(text: str) -> str:
+    if len(text) > 1 and text[-1] in {"야", "아"}:
+        return text[:-1]
+    return text
+
+
+def decompose_hangul(value: str) -> list[str]:
+    parts: list[str] = []
+    for char in value:
+        code = ord(char)
+        if 0xAC00 <= code <= 0xD7A3:
+            syllable = code - 0xAC00
+            choseong_index = syllable // 588
+            jungseong_index = (syllable % 588) // 28
+            jongseong_index = syllable % 28
+            parts.append(CHOSEONG[choseong_index])
+            parts.append(JUNGSEONG[jungseong_index])
+            jongseong = JONGSEONG[jongseong_index]
+            if jongseong:
+                parts.append(jongseong)
+        else:
+            parts.append(char)
+    return parts
+
+
+def phonetic_substitution_cost(left: str, right: str) -> float:
+    if left == right:
+        return 0.0
+    for group in PHONETIC_GROUPS:
+        if left in group and right in group:
+            return 0.25
+    return 1.0
+
+
+def phonetic_gap_cost(value: str) -> float:
+    return 0.25 if value == "ㅇ" else 1.0
+
+
+def jamo_similarity(left: str, right: str) -> float:
+    left_parts = decompose_hangul(left)
+    right_parts = decompose_hangul(right)
+    if not left_parts and not right_parts:
+        return 1.0
+    if not left_parts or not right_parts:
+        return 0.0
+
+    previous = [0.0]
+    for part in right_parts:
+        previous.append(previous[-1] + phonetic_gap_cost(part))
+
+    for left_part in left_parts:
+        current = [previous[0] + phonetic_gap_cost(left_part)]
+        for index, right_part in enumerate(right_parts, start=1):
+            delete = previous[index] + phonetic_gap_cost(left_part)
+            insert = current[index - 1] + phonetic_gap_cost(right_part)
+            substitute = previous[index - 1] + phonetic_substitution_cost(left_part, right_part)
+            current.append(min(delete, insert, substitute))
+        previous = current
+
+    max_len = max(len(left_parts), len(right_parts))
+    return max(0.0, 1.0 - previous[-1] / max_len)
+
+
+def wake_word_similarity(text: object) -> float:
+    normalized = normalize_text(text)
+    if not normalized:
+        return 0.0
+    candidates = {normalized, strip_wake_suffix(normalized)}
+    target = wake_name()
+    max_diff = wake_max_length_diff()
+    scores = [
+        jamo_similarity(candidate, target)
+        for candidate in candidates
+        if abs(len(candidate) - len(target)) <= max_diff
+    ]
+    return max(scores, default=0.0)
+
+
 def is_wake_word(text: object) -> bool:
     normalized = normalize_text(text)
-    if normalized in WAKE_ALIASES:
+    if normalized in wake_phrases():
         return True
-    return any(normalized in {f"{alias}야", f"{alias}아"} for alias in WAKE_ALIASES)
+    return wake_word_similarity(normalized) >= wake_similarity_threshold()
 
 
 def classify_local_command(text: object) -> str | None:
@@ -79,7 +274,27 @@ def classify_local_command(text: object) -> str | None:
         or "빛찾" in normalized
     ):
         return "start_light_search"
-    if any(word in normalized for word in ("상태", "센서", "온도", "습도", "토양수분", "조도알려")):
+
+    # Weather and other daily questions must reach the server even when they
+    # contain words such as "temperature" or "status".
+    if "날씨" in normalized or (normalized.startswith("오늘") and "상태" not in normalized):
+        return None
+
+    request_words = ("알려", "알려줘", "어때", "확인", "보여", "말해", "보고")
+    explicit_status_phrases = (
+        "상태확인",
+        "상태알려",
+        "상태어때",
+        "오늘상태",
+        "현재상태",
+        "식물상태",
+    )
+    sensor_words = ("센서", "온도", "습도", "토양수분", "조도")
+    if any(phrase in normalized for phrase in explicit_status_phrases):
+        return "show_status"
+    if any(sensor in normalized for sensor in sensor_words) and any(
+        request in normalized for request in request_words
+    ):
         return "show_status"
     return None
 

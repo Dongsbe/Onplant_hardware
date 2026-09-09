@@ -6,13 +6,11 @@ import os
 import re
 import shutil
 import subprocess
-import tempfile
 import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.error import URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
@@ -28,6 +26,8 @@ from local_runtime import (  # noqa: E402
     read_sensor_cache,
     write_display_state,
 )
+from local_tts import speak as speak_local  # noqa: E402
+from local_tts import speak_async as speak_local_async  # noqa: E402
 
 
 DISPLAY_BUILD = "local-first-touch-20260902-1"
@@ -208,42 +208,11 @@ def accept_remote_settings(remote: dict) -> None:
 
 
 def play_message_async(text: str) -> None:
-    threading.Thread(target=play_message, args=(text,), daemon=True).start()
+    speak_local_async(text)
 
 
 def play_message(text: str) -> bool:
-    text = str(text or "").strip()
-    if not text:
-        return False
-    with tempfile.TemporaryDirectory() as temp_dir:
-        output = Path(temp_dir) / "display-message.mp3"
-        try:
-            result = post_json(f"{remote_base_url}/api/tts", {"text": text}, timeout=20.0)
-            audio_url = str(result.get("audio_url") or "")
-            if audio_url:
-                audio_url = audio_url if audio_url.startswith("http") else f"{remote_base_url}{audio_url}"
-                request = Request(audio_url, headers={"Accept": "audio/mpeg,*/*"})
-                with urlopen(request, timeout=10.0) as response:
-                    output.write_bytes(response.read())
-                player = shutil.which("mpg123")
-                if player and output.is_file() and output.stat().st_size > 0:
-                    subprocess.run([player, "-q", "-a", os.getenv("ONPLANT_SPEAKER_DEVICE", "plughw:3,0"), str(output)], check=False)
-                    return True
-        except Exception as exc:
-            print(f"display server TTS unavailable: {exc}", file=sys.stderr)
-
-        fallback = shutil.which("espeak-ng") or shutil.which("espeak")
-        if not fallback:
-            return False
-        wav = Path(temp_dir) / "display-message.wav"
-        result = subprocess.run([fallback, "-v", "ko", "-s", "155", "-w", str(wav), text], check=False)
-        if result.returncode != 0 or not wav.is_file():
-            return False
-        player = shutil.which("aplay")
-        if not player:
-            return False
-        subprocess.run([player, "-D", os.getenv("ONPLANT_SPEAKER_DEVICE", "plughw:3,0"), str(wav)], check=False)
-        return True
+    return speak_local(text)
 
 
 def play_test_sound() -> bool:

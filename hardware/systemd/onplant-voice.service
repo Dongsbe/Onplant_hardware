@@ -5,7 +5,7 @@ After=sound.target onplant-drive.service onplant-sensor.service
 [Service]
 Type=simple
 EnvironmentFile=%h/.config/onplant/onplant-robot.env
-ExecStart=/bin/bash -lc 'cd "$ONPLANT_PROJECT_DIR" && exec "$ONPLANT_PROJECT_DIR/venv/bin/python3" voice_assistant_local.py --server "$ONPLANT_SERVER" --robot-id "$ONPLANT_ROBOT_ID" --loop --wake-seconds "${ONPLANT_WAKE_SECONDS:-2}" --seconds "${ONPLANT_VOICE_SECONDS:-4}" --mic-device "${ONPLANT_MIC_DEVICE:-plughw:2,0}" --speaker-device "${ONPLANT_SPEAKER_DEVICE:-plughw:3,0}" --model "$ONPLANT_VOSK_MODEL"'
+ExecStart=/bin/bash -lc 'cd "$ONPLANT_PROJECT_DIR" && exec "$ONPLANT_PROJECT_DIR/venv/bin/python3" -u voice_assistant_local.py --server "$ONPLANT_SERVER" --robot-id "$ONPLANT_ROBOT_ID" --loop --wake-seconds "${ONPLANT_WAKE_SECONDS:-2}" --seconds "${ONPLANT_VOICE_SECONDS:-6}" --mic-device "${ONPLANT_MIC_DEVICE:-plughw:2,0}" --speaker-device "${ONPLANT_SPEAKER_DEVICE:-plughw:3,0}" --model "$ONPLANT_VOSK_MODEL" --wake-confidence "${ONPLANT_WAKE_CONFIDENCE:-0.50}"'
 Restart=always
 RestartSec=3
 

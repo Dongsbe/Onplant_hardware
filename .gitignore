@@ -16,6 +16,7 @@ venv/
 # Logs
 *.log
 nohup.out
+calibration_*.csv
 
 # Runtime / local cache
 *.db
@@ -33,3 +34,9 @@ Thumbs.db
 
 # Archived unused code
 _archive_unused_*/
+
+# Local manual backups
+hardware_backup_*/
+*.backup
+*.backup-*
+*_backup.py

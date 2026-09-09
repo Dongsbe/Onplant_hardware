@@ -33,6 +33,12 @@ DEFAULT_SENSOR_BUS = int(os.getenv("ONPLANT_SENSOR_BUS", "3"))
 DHT_READ_INTERVAL = float(os.getenv("ONPLANT_DHT_READ_INTERVAL", "3"))
 _last_dht_read = 0.0
 _last_dht_values: tuple[float | None, float | None] = (None, None)
+_last_sensor_values: dict[str, Any] = {
+    "lux": None,
+    "temperature": None,
+    "humidity": None,
+    "soil_moisture": None,
+}
 
 BH1750_ADDR = 0x23
 BH1750_CONT_HIGH_RES = 0x10
@@ -148,6 +154,8 @@ def dummy_payload() -> dict[str, float]:
 
 
 def read_sensors(args: argparse.Namespace, bus: smbus.SMBus, ads_addr: int | None) -> dict[str, Any]:
+    global _last_sensor_values
+
     values: dict[str, Any] = {
         "lux": None,
         "temperature": None,
@@ -188,6 +196,13 @@ def read_sensors(args: argparse.Namespace, bus: smbus.SMBus, ads_addr: int | Non
                 values["soil_moisture"] = moisture_percent(volts, args.dry_volts, args.wet_volts)
             except Exception as exc:
                 print("ADS1115 read failed:", exc)
+
+    for key, previous in _last_sensor_values.items():
+        if values.get(key) is None and previous is not None:
+            values[key] = previous
+    for key, value in values.items():
+        if value is not None:
+            _last_sensor_values[key] = value
 
     return values
 
@@ -257,15 +272,15 @@ def main() -> int:
     parser.add_argument("--interval", type=float, default=0.5)
     parser.add_argument("--server-interval", type=float, default=5.0)
     parser.add_argument("--once", action="store_true")
-    parser.add_argument("--lux-mode", choices=["real", "dummy", "none"], default="real")
-    parser.add_argument("--dht-mode", choices=["real", "dummy", "none"], default="dummy")
-    parser.add_argument("--soil-mode", choices=["real", "dummy", "none"], default="dummy")
+    parser.add_argument("--lux-mode", choices=["real", "dummy", "none"], default=os.getenv("ONPLANT_LUX_MODE", "real"))
+    parser.add_argument("--dht-mode", choices=["real", "dummy", "none"], default=os.getenv("ONPLANT_DHT_MODE", "real"))
+    parser.add_argument("--soil-mode", choices=["real", "dummy", "none"], default=os.getenv("ONPLANT_SOIL_MODE", "real"))
     parser.add_argument("--dht-pin", default=os.getenv("ONPLANT_DHT_PIN", "D27"))
     parser.add_argument("--dht-power-gpio", type=int, default=int(os.getenv("ONPLANT_DHT_POWER_GPIO", "17")))
     parser.add_argument("--dht-power-settle", type=float, default=float(os.getenv("ONPLANT_DHT_POWER_SETTLE", "5")))
     parser.add_argument("--soil-channel", type=int, choices=[0, 1, 2, 3], default=0)
-    parser.add_argument("--dry-volts", type=float, default=3.0)
-    parser.add_argument("--wet-volts", type=float, default=1.2)
+    parser.add_argument("--dry-volts", type=float, default=float(os.getenv("ONPLANT_SOIL_DRY_VOLTS", "3.0")))
+    parser.add_argument("--wet-volts", type=float, default=float(os.getenv("ONPLANT_SOIL_WET_VOLTS", "1.2")))
     args = parser.parse_args()
 
     if args.dht_mode == "real":

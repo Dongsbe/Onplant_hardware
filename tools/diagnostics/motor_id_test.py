@@ -1,7 +1,13 @@
 import time
 import signal
 import sys
-from Raspbot_Lib import Raspbot
+from pathlib import Path
+
+PROJECT_DIR = Path(__file__).resolve().parents[2]
+if str(PROJECT_DIR) not in sys.path:
+    sys.path.insert(0, str(PROJECT_DIR))
+
+from Raspbot_Lib import Raspbot  # noqa: E402
 
 bot = Raspbot()
 

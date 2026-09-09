@@ -20,6 +20,7 @@ from local_runtime import (
     write_display_state,
     write_runtime_state,
 )
+from local_tts import speak, speak_async
 
 
 DEFAULT_SERVER_URL = "http://192.168.100.6:5050"
@@ -49,6 +50,12 @@ class RobotMain:
         self.last_key_read = 0.0
         self.command_timeout = max(0.1, float(os.getenv("ONPLANT_COMMAND_TIMEOUT", "2.0")))
         self.running = True
+
+    def play_local_tts_async(self, text: str) -> None:
+        speak_async(text)
+
+    def play_local_tts(self, text: str) -> bool:
+        return speak(text)
 
     def start(self) -> None:
         if self.bot is not None:
@@ -147,7 +154,7 @@ class RobotMain:
         env["ONPLANT_AUTO_START"] = "1"
         env["ONPLANT_DISABLE_IR"] = "1"
         env.setdefault("ONPLANT_DUMMY_LUX", "0")
-        env.setdefault("ONPLANT_DUMMY_SOIL", "1")
+        env.setdefault("ONPLANT_DUMMY_SOIL", "0")
         env.setdefault("ONPLANT_USE_SENSOR_CACHE", "1")
         env.setdefault("ONPLANT_TARGET_LUX_MIN", "800")
         env.setdefault("ONPLANT_TARGET_LUX_MAX", "900")
@@ -159,6 +166,10 @@ class RobotMain:
         print("start light search:", source)
         self.drive_process = subprocess.Popen(command, cwd=str(self.project_dir), env=env)
         write_runtime_state(True, "STARTING", "START_LIGHT_SEARCH")
+        if source not in {"display-touch", "voice-local"}:
+            message = "최적 조도 탐색을 시작합니다."
+            write_display_state("report", message, duration=6.0)
+            self.play_local_tts_async(message)
         self.post_move_log("MAIN", "START_LIGHT_SEARCH", f"source={source}")
 
     def stop_drive(self, source: str) -> None:

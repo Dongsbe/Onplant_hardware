@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # coding: utf-8
 import smbus2 as smbus
-import time,random
-import math
+import random
+import time
 
 PI5Car_I2CADDR = 0x2B
 class Raspbot():

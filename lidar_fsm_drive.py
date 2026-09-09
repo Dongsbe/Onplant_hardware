@@ -8,14 +8,19 @@ import time
 import urllib.request
 from enum import Enum
 
-import smbus
+try:
+    import smbus
+except ImportError:
+    import smbus2 as smbus
 from rplidar import RPLidar
 from serial.serialutil import SerialException
 
 from Raspbot_Lib import Raspbot
-from local_runtime import read_sensor_cache, write_runtime_state
+from local_runtime import read_sensor_cache, write_display_state, write_runtime_state
+from local_tts import speak as play_local_tts
 from movement.movement_controller import MovementController
 
+DRIVE_BUILD = "light-fsm-20260907-side-clearance-escape85"
 PORT = "/dev/ttyUSB0"
 LIDAR_FRONT_ANGLE = -4.0
 LIDAR_MIRROR_ANGLE = True
@@ -50,7 +55,7 @@ def env_bool(name, default=False):
 
 
 USE_DUMMY_LUX = env_bool("ONPLANT_DUMMY_LUX", False)
-USE_DUMMY_SOIL = env_bool("ONPLANT_DUMMY_SOIL", True)
+USE_DUMMY_SOIL = env_bool("ONPLANT_DUMMY_SOIL", False)
 AUTO_START = env_bool("ONPLANT_AUTO_START", False)
 DISABLE_IR = env_bool("ONPLANT_DISABLE_IR", False)
 USE_SENSOR_CACHE = env_bool("ONPLANT_USE_SENSOR_CACHE", True)
@@ -74,15 +79,15 @@ MAX_VALID = 2000
 LIDAR_TO_FRONT_AXLE = float(os.getenv("ONPLANT_LIDAR_TO_FRONT_AXLE", "25"))
 LIDAR_TO_LEFT_OUTER = float(os.getenv("ONPLANT_LIDAR_TO_LEFT_OUTER", "80"))
 LIDAR_TO_RIGHT_OUTER = float(os.getenv("ONPLANT_LIDAR_TO_RIGHT_OUTER", "80"))
-SAFETY_MARGIN = float(os.getenv("ONPLANT_LIDAR_SAFETY_MARGIN", "20"))
+SAFETY_MARGIN = float(os.getenv("ONPLANT_LIDAR_SAFETY_MARGIN", "30"))
 
 LEFT_CLEARANCE = LIDAR_TO_LEFT_OUTER + SAFETY_MARGIN
 RIGHT_CLEARANCE = LIDAR_TO_RIGHT_OUTER + SAFETY_MARGIN
 
-FRONT_WARN_X = LIDAR_TO_FRONT_AXLE + SAFETY_MARGIN + float(os.getenv("ONPLANT_FRONT_WARN_MM", "260"))
-FRONT_DANGER_X = LIDAR_TO_FRONT_AXLE + SAFETY_MARGIN + float(os.getenv("ONPLANT_FRONT_DANGER_MM", "140"))
-FRONT_EMERGENCY_X = LIDAR_TO_FRONT_AXLE + SAFETY_MARGIN + float(os.getenv("ONPLANT_FRONT_EMERGENCY_MM", "70"))
-FRONT_CLEAR_X = LIDAR_TO_FRONT_AXLE + SAFETY_MARGIN + float(os.getenv("ONPLANT_FRONT_CLEAR_MM", "330"))
+FRONT_WARN_X = LIDAR_TO_FRONT_AXLE + SAFETY_MARGIN + float(os.getenv("ONPLANT_FRONT_WARN_MM", "310"))
+FRONT_DANGER_X = LIDAR_TO_FRONT_AXLE + SAFETY_MARGIN + float(os.getenv("ONPLANT_FRONT_DANGER_MM", "180"))
+FRONT_EMERGENCY_X = LIDAR_TO_FRONT_AXLE + SAFETY_MARGIN + float(os.getenv("ONPLANT_FRONT_EMERGENCY_MM", "95"))
+FRONT_CLEAR_X = LIDAR_TO_FRONT_AXLE + SAFETY_MARGIN + float(os.getenv("ONPLANT_FRONT_CLEAR_MM", "380"))
 
 SIDE_FRONT_MIN_X = 0
 SIDE_FRONT_MAX_X = 650
@@ -113,49 +118,58 @@ ONPLANT_SERVER_URL = os.getenv("ONPLANT_SERVER_URL", "http://192.168.100.6:5050"
 ONPLANT_ROBOT_ID = os.getenv("ONPLANT_ROBOT_ID", "raspbot-a")
 
 EXPLORE_SECONDS = 50.0
-LIGHT_SEEK_SECONDS = 18.0
+LIGHT_SEEK_SECONDS = 20.0
 LIGHT_IMPROVE_MARGIN = 3.0
 TARGET_LUX_MIN = float(os.getenv("ONPLANT_TARGET_LUX_MIN", "800"))
 TARGET_LUX_MAX = float(os.getenv("ONPLANT_TARGET_LUX_MAX", "900"))
 TARGET_LUX = float(os.getenv("ONPLANT_TARGET_LUX", str((TARGET_LUX_MIN + TARGET_LUX_MAX) / 2)))
 LIGHT_FOUND_MARGIN = float(os.getenv("ONPLANT_LIGHT_FOUND_MARGIN", "50"))
 RETURN_STOP_MARGIN = float(os.getenv("ONPLANT_RETURN_STOP_MARGIN", "50"))
-RETURN_SEGMENT_MAX_SECONDS = 0.45
-RETURN_BACKWARD_MAX_SECONDS = 0.25
-RETURN_ALLOW_BACKWARD = False
-RETURN_TURN_AROUND_SECONDS = 0.85
 
-TURN_PULSE_SECONDS = 0.28
-BACKUP_SECONDS = 0.30
-ESCAPE_TURN_SECONDS = 0.65
+TURN_PULSE_SECONDS = float(os.getenv("ONPLANT_TURN_PULSE_SECONDS", "0.12"))
+BACKUP_SECONDS = float(os.getenv("ONPLANT_BACKUP_SECONDS", "0.30"))
+ESCAPE_TURN_SECONDS = float(os.getenv("ONPLANT_ESCAPE_TURN_SECONDS", "0.42"))
+DEADEND_BACKUP_SECONDS = float(os.getenv("ONPLANT_DEADEND_BACKUP_SECONDS", "0.65"))
+ESCAPE_TURN_DEGREES = float(os.getenv("ONPLANT_ESCAPE_TURN_DEGREES", "85"))
+ESCAPE_TURN_TOLERANCE_DEGREES = float(os.getenv("ONPLANT_ESCAPE_TURN_TOLERANCE_DEGREES", "7"))
+ESCAPE_TURN_MAX_SECONDS = float(os.getenv("ONPLANT_ESCAPE_TURN_MAX_SECONDS", "0.60"))
+ESCAPE_SIDE_BLOCK_MM = float(os.getenv("ONPLANT_ESCAPE_SIDE_BLOCK_MM", "230"))
+CORNER_BACKUP_SIDE_SCORE_MM = float(os.getenv("ONPLANT_CORNER_BACKUP_SIDE_SCORE_MM", "360"))
+ESCAPE_REPEAT_WINDOW_SECONDS = float(os.getenv("ONPLANT_ESCAPE_REPEAT_WINDOW_SECONDS", "5.0"))
+ESCAPE_DIRECTION_LOCK_SECONDS = float(os.getenv("ONPLANT_ESCAPE_DIRECTION_LOCK_SECONDS", "4.0"))
+ESCAPE_SAME_TURN_BACKUP_LIMIT = int(os.getenv("ONPLANT_ESCAPE_SAME_TURN_BACKUP_LIMIT", "1"))
+DOOR_GUARD_ENABLED = env_bool("ONPLANT_DOOR_GUARD_ENABLED", True)
+DOOR_HALF_WIDTH_MM = float(os.getenv("ONPLANT_DOOR_HALF_WIDTH_MM", "220"))
+DOOR_EXIT_Y_MM = float(os.getenv("ONPLANT_DOOR_EXIT_Y_MM", "-20"))
+DOOR_PREDICT_SECONDS = float(os.getenv("ONPLANT_DOOR_PREDICT_SECONDS", "0.55"))
 COMMAND_REFRESH_SECONDS = 0.6
 POSE_LINEAR_MM_PER_SEC = float(os.getenv("ONPLANT_POSE_LINEAR_MM_PER_SEC", "90"))
-POSE_TURN_DEG_PER_SEC = float(os.getenv("ONPLANT_POSE_TURN_DEG_PER_SEC", "120"))
+POSE_TURN_DEG_PER_SEC = float(os.getenv("ONPLANT_POSE_TURN_DEG_PER_SEC", "175"))
+POSE_UPDATE_MAX_DT = float(os.getenv("ONPLANT_POSE_UPDATE_MAX_DT", "0.50"))
 BLOCKED_GRID_MM = float(os.getenv("ONPLANT_BLOCKED_GRID_MM", "100"))
-FIELD_LEFT_X = float(os.getenv("ONPLANT_FIELD_LEFT_X", "-700"))
-FIELD_RIGHT_X = float(os.getenv("ONPLANT_FIELD_RIGHT_X", "700"))
-FIELD_BACK_Y = float(os.getenv("ONPLANT_FIELD_BACK_Y", "-120"))
-FIELD_FRONT_Y = float(os.getenv("ONPLANT_FIELD_FRONT_Y", "1800"))
-FIELD_MARGIN_MM = float(os.getenv("ONPLANT_FIELD_MARGIN_MM", "180"))
-EXPLORE_SWEEP_SECONDS = float(os.getenv("ONPLANT_EXPLORE_SWEEP_SECONDS", "5.0"))
+RETURN_MAX_SECONDS = float(os.getenv("ONPLANT_RETURN_MAX_SECONDS", "20.0"))
+RETURN_HEADING_TOLERANCE_DEGREES = float(os.getenv("ONPLANT_RETURN_HEADING_TOLERANCE_DEGREES", "22"))
+RETURN_TURN_MIN_SECONDS = float(os.getenv("ONPLANT_RETURN_TURN_MIN_SECONDS", "0.08"))
+RETURN_DETOUR_DISTANCE_MM = float(os.getenv("ONPLANT_RETURN_DETOUR_DISTANCE_MM", "350"))
+RETURN_DETOUR_STOP_MARGIN = float(os.getenv("ONPLANT_RETURN_DETOUR_STOP_MARGIN", "90"))
+RETURN_DETOUR_MAX_SECONDS = float(os.getenv("ONPLANT_RETURN_DETOUR_MAX_SECONDS", "5.0"))
 
-EXPLORE_NUDGE_INTERVAL = float(os.getenv("ONPLANT_EXPLORE_NUDGE_INTERVAL", "6.0"))
-EXPLORE_NUDGE_SECONDS = float(os.getenv("ONPLANT_EXPLORE_NUDGE_SECONDS", "0.22"))
-EXPLORE_AUTO_NUDGE = env_bool("ONPLANT_EXPLORE_AUTO_NUDGE", False)
+EXPLORE_NUDGE_INTERVAL = float(os.getenv("ONPLANT_EXPLORE_NUDGE_INTERVAL", "2.5"))
+EXPLORE_NUDGE_SECONDS = float(os.getenv("ONPLANT_EXPLORE_NUDGE_SECONDS", "0.09"))
 EXPLORE_BRANCH_ENABLED = env_bool("ONPLANT_EXPLORE_BRANCH_ENABLED", True)
 EXPLORE_BRANCH_DELAY_SECONDS = float(os.getenv("ONPLANT_EXPLORE_BRANCH_DELAY_SECONDS", "4.0"))
-EXPLORE_BRANCH_INTERVAL = float(os.getenv("ONPLANT_EXPLORE_BRANCH_INTERVAL", "5.0"))
+EXPLORE_BRANCH_MIN_INTERVAL = float(os.getenv("ONPLANT_EXPLORE_BRANCH_MIN_INTERVAL", "3.0"))
+EXPLORE_BRANCH_MAX_INTERVAL = float(os.getenv("ONPLANT_EXPLORE_BRANCH_MAX_INTERVAL", "7.0"))
 EXPLORE_BRANCH_OPEN_MM = float(os.getenv("ONPLANT_EXPLORE_BRANCH_OPEN_MM", "450"))
-EXPLORE_BRANCH_SECONDS = float(os.getenv("ONPLANT_EXPLORE_BRANCH_SECONDS", "0.28"))
-EXPLORE_BIAS_SWITCH_SECONDS = 8.0
-EXPLORE_PASSAGE_SIDE_LIMIT = 300
-SIDE_TOO_CLOSE_X = float(os.getenv("ONPLANT_SIDE_TOO_CLOSE_MM", "260"))
-SIDE_SOFT_CLOSE_X = float(os.getenv("ONPLANT_SIDE_SOFT_CLOSE_MM", "340"))
-SIDE_BALANCE_DEADBAND = 90
-TURN_SPACE_MIN_X = float(os.getenv("ONPLANT_TURN_SPACE_MIN_MM", "230"))
+EXPLORE_BRANCH_SECONDS = float(os.getenv("ONPLANT_EXPLORE_BRANCH_SECONDS", "0.10"))
+EXPLORE_EDGE_BIAS_X = float(os.getenv("ONPLANT_EXPLORE_EDGE_BIAS_X", "220"))
+EXPLORE_POST_ESCAPE_FORWARD_SECONDS = float(os.getenv("ONPLANT_EXPLORE_POST_ESCAPE_FORWARD_SECONDS", "2.0"))
+EXPLORE_PASSAGE_SIDE_LIMIT = float(os.getenv("ONPLANT_EXPLORE_PASSAGE_SIDE_LIMIT", "320"))
+PASSAGE_CENTER_DEADBAND = float(os.getenv("ONPLANT_PASSAGE_CENTER_DEADBAND_MM", "40"))
+SIDE_TOO_CLOSE_X = float(os.getenv("ONPLANT_SIDE_TOO_CLOSE_MM", "300"))
+SIDE_CRITICAL_X = float(os.getenv("ONPLANT_SIDE_CRITICAL_MM", "240"))
+TURN_SPACE_MIN_X = float(os.getenv("ONPLANT_TURN_SPACE_MIN_MM", "250"))
 TRAPPED_BACKUP_SECONDS = 0.45
-TRAPPED_FORWARD_SECONDS = 0.30
-TRAPPED_ESCAPE_SECONDS = float(os.getenv("ONPLANT_TRAPPED_ESCAPE_SECONDS", "0.35"))
 AVOID_REPEAT_BACKUP_COUNT = 3
 AVOID_REPEAT_ESCAPE_COUNT = 5
 
@@ -167,6 +181,7 @@ class State(Enum):
     BACKUP = "BACKUP"
     ESCAPE = "ESCAPE"
     RETURN_TO_BEST = "RETURN_TO_BEST"
+    RETURN_DETOUR = "RETURN_DETOUR"
     SEEK_LIGHT = "SEEK_LIGHT"
 
 
@@ -183,8 +198,6 @@ state_until = 0.0
 state_started = 0.0
 explore_started = 0.0
 seek_started = 0.0
-return_segments = []
-return_index = 0
 return_until = 0.0
 resume_state = None
 
@@ -196,6 +209,16 @@ active_motion_started = 0.0
 avoid_turn = "LEFT"
 last_turn = "LEFT"
 turn_repeat_count = 0
+pending_escape_turn = None
+pending_escape_resume_state = None
+committed_escape_turn = None
+committed_escape_start_heading = 0.0
+committed_escape_resume_state = None
+last_escape_done_turn = None
+last_escape_done_time = 0.0
+escape_lock_turn = None
+escape_lock_until = 0.0
+escape_same_turn_backup_count = 0
 
 current_lux = 0.0
 current_soil = 0.0
@@ -219,12 +242,25 @@ explore_last_nudge = 0.0
 explore_nudge_until = 0.0
 explore_nudge_motion = "FORWARD"
 last_explore_branch_turn = None
+explore_next_branch_at = 0.0
+explore_hold_forward_until = 0.0
 last_lidar_post = 0.0
 last_lidar_post_error = 0.0
 lidar_post_ok_printed = False
 lidar_post_queue = queue.Queue(maxsize=1)
 auto_start_pending = AUTO_START
 last_runtime_write = 0.0
+return_started = 0.0
+return_turn_motion = None
+return_turn_until = 0.0
+return_detour_started = 0.0
+return_detour_until = 0.0
+return_detour_x = 0.0
+return_detour_y = 0.0
+seek_last_error = float("inf")
+seek_probe_motion = "FORWARD"
+seek_probe_until = 0.0
+search_finished = False
 
 
 def lidar_post_worker():
@@ -263,6 +299,62 @@ def start_lidar_post_worker():
     worker.start()
 
 
+def search_result_message(label):
+    if label in {"RETURN_TO_BEST_DONE", "SEEK_LIGHT_FOUND"}:
+        return "최적 조도 위치에 도착했습니다. 최적 조도 탐색을 종료합니다."
+    lux_text = f"{current_lux:.0f}럭스" if current_lux >= 0 else "측정되지 않았습니다"
+    return f"현재 위치 조도는 {lux_text}입니다. 최적 조도 탐색을 종료합니다."
+
+
+def obstacle_label(scan_info):
+    if scan_info["emergency"]:
+        return "emergency"
+    if scan_info["danger"]:
+        return "danger"
+    if scan_info["front_blocked"]:
+        return "front_blocked"
+    return "clear"
+
+
+def runtime_context_state():
+    if state == State.RETURN_DETOUR:
+        return State.RETURN_TO_BEST
+    if state in (State.AVOID, State.BACKUP, State.ESCAPE):
+        return committed_escape_resume_state or pending_escape_resume_state or resume_state or State.EXPLORE
+    return state
+
+
+def detail_state_label():
+    if state == State.AVOID:
+        return "장애물 회피"
+    if state == State.BACKUP:
+        return "후진 회피"
+    if state == State.ESCAPE:
+        return "탈출 회전"
+    if state == State.RETURN_DETOUR:
+        return "장애물 우회"
+    if state == State.EXPLORE:
+        return "자유 탐색"
+    if state == State.RETURN_TO_BEST:
+        return "좌표 기반 복귀"
+    if state == State.SEEK_LIGHT:
+        return "근거리 조도 확인"
+    return "대기"
+
+
+def runtime_phase(now):
+    context = runtime_context_state()
+    if context == State.EXPLORE:
+        return "조도탐색(1차)", max(0.0, EXPLORE_SECONDS - elapsed_from_start(now))
+    if context in (State.RETURN_TO_BEST, State.RETURN_DETOUR):
+        elapsed = now - return_started if return_started > 0 else 0.0
+        return "복귀탐색", max(0.0, RETURN_MAX_SECONDS - elapsed)
+    if context == State.SEEK_LIGHT:
+        elapsed = now - seek_started if seek_started > 0 else 0.0
+        return "조도탐색(2차)", max(0.0, LIGHT_SEEK_SECONDS - elapsed)
+    return "대기", None
+
+
 def maybe_post_lidar(scan_info, now):
     global last_lidar_post
 
@@ -275,9 +367,23 @@ def maybe_post_lidar(scan_info, now):
     points = scan_info["points"]
     stride = max(1, len(points) // LIDAR_POST_MAX_POINTS)
     sampled = points[::stride][:LIDAR_POST_MAX_POINTS]
+    phase, remaining = runtime_phase(now)
     payload = {
         "state": state.value,
         "action": current_motion,
+        "phase": phase,
+        "detail_state": detail_state_label(),
+        "remaining_seconds": round(remaining, 1) if remaining is not None else None,
+        "label": detail_state_label(),
+        "obstacle": obstacle_label(scan_info),
+        "current_lux": round(current_lux, 1),
+        "best_lux": round(best_lux, 1) if best_lux >= 0 else None,
+        "lux_error": round(lux_error_from_target(current_lux), 1) if current_lux >= 0 else None,
+        "best_time": round(best_lux_time - explore_started, 1) if explore_started > 0 else 0.0,
+        "explore_elapsed": round(elapsed_from_start(now), 1) if explore_started > 0 else 0.0,
+        "return_elapsed": round(now - return_started, 1) if return_started > 0 else 0.0,
+        "seek_elapsed": round(now - seek_started, 1) if seek_started > 0 else 0.0,
+        "seek_seconds": LIGHT_SEEK_SECONDS,
         "front_blocked": scan_info["front_blocked"],
         "danger": scan_info["danger"],
         "emergency": scan_info["emergency"],
@@ -352,6 +458,39 @@ def reset_pose(now):
     blocked_map = set()
 
 
+def predict_pose(motion, seconds):
+    if motion not in ("FORWARD", "BACKWARD"):
+        return pose_x, pose_y
+
+    direction = 1.0 if motion == "FORWARD" else -1.0
+    distance = direction * POSE_LINEAR_MM_PER_SEC * seconds
+    rad = math.radians(heading_deg)
+    return pose_x + math.sin(rad) * distance, pose_y + math.cos(rad) * distance
+
+
+def door_exit_risk(motion):
+    if not DOOR_GUARD_ENABLED:
+        return False
+    if motion not in ("FORWARD", "BACKWARD"):
+        return False
+
+    next_x, next_y = predict_pose(motion, DOOR_PREDICT_SECONDS)
+    return abs(next_x) <= DOOR_HALF_WIDTH_MM and next_y <= DOOR_EXIT_Y_MM
+
+
+def choose_door_recovery_turn():
+    angle = normalize_angle(heading_deg)
+    return "LEFT" if angle > 0 else "RIGHT"
+
+
+def guard_motion_for_door(motion):
+    if not door_exit_risk(motion):
+        return motion
+    if motion == "BACKWARD":
+        return "STOP"
+    return choose_door_recovery_turn()
+
+
 def update_pose(now):
     global pose_x, pose_y, heading_deg, pose_last_update
 
@@ -359,7 +498,7 @@ def update_pose(now):
         pose_last_update = now
         return
 
-    dt = max(0.0, min(now - pose_last_update, 0.25))
+    dt = max(0.0, min(now - pose_last_update, POSE_UPDATE_MAX_DT))
     pose_last_update = now
     if dt <= 0:
         return
@@ -386,7 +525,7 @@ def remember_blocked(scan_info):
         return
     grid_x = int(round(pose_x / BLOCKED_GRID_MM))
     grid_y = int(round(pose_y / BLOCKED_GRID_MM))
-    blocked_map.add((grid_x, grid_y, heading_label()))
+    blocked_map.add((grid_x, grid_y))
 
 
 def is_self_noise(angle, distance):
@@ -471,42 +610,127 @@ def opposite_turn(turn):
     return "RIGHT" if turn == "LEFT" else "LEFT"
 
 
-def turn_space(turn, left_score, right_score):
-    return left_score if turn == "LEFT" else right_score
-
-
-def avoid_blocked_turn(turn, left_score, right_score):
-    if turn == "RIGHT" and right_score < SIDE_SOFT_CLOSE_X and left_score > right_score + SIDE_BALANCE_DEADBAND:
-        return "LEFT"
-    if turn == "LEFT" and left_score < SIDE_SOFT_CLOSE_X and right_score > left_score + SIDE_BALANCE_DEADBAND:
-        return "RIGHT"
+def safe_turn_from_scan(turn, scan_info):
+    if turn_side_blocked(turn, scan_info):
+        other = opposite_turn(turn)
+        if not turn_side_blocked(other, scan_info):
+            return other
     return turn
 
 
-def safe_turn_from_scan(turn, scan_info):
-    return avoid_blocked_turn(turn, scan_info["left_score"], scan_info["right_score"])
+def turn_side_blocked(turn, scan_info):
+    if turn == "RIGHT":
+        return scan_info["right_count"] >= 2 and scan_info["right_score"] < ESCAPE_SIDE_BLOCK_MM
+    return scan_info["left_count"] >= 2 and scan_info["left_score"] < ESCAPE_SIDE_BLOCK_MM
 
 
-def choose_branch_turn(scan_info):
-    left_score = scan_info["left_score"]
-    right_score = scan_info["right_score"]
-    left_open = left_score >= EXPLORE_BRANCH_OPEN_MM
-    right_open = right_score >= EXPLORE_BRANCH_OPEN_MM
-
-    if left_open and right_open:
-        if abs(left_score - right_score) > SIDE_BALANCE_DEADBAND:
-            return "LEFT" if left_score > right_score else "RIGHT"
-        if last_explore_branch_turn == "LEFT":
-            return "RIGHT"
-        if last_explore_branch_turn == "RIGHT":
-            return "LEFT"
-        return random.choice(["LEFT", "RIGHT"])
-
-    if left_open:
-        return "LEFT"
-    if right_open:
-        return "RIGHT"
+def active_escape_lock(now=None):
+    now = time.monotonic() if now is None else now
+    if escape_lock_turn in ("LEFT", "RIGHT") and now < escape_lock_until:
+        return escape_lock_turn
     return None
+
+
+def lock_escape_direction(turn, now=None, reset_retry=True):
+    global escape_lock_turn, escape_lock_until, escape_same_turn_backup_count
+    if turn not in ("LEFT", "RIGHT"):
+        return
+    now = time.monotonic() if now is None else now
+    escape_lock_turn = turn
+    escape_lock_until = now + ESCAPE_DIRECTION_LOCK_SECONDS
+    if reset_retry:
+        escape_same_turn_backup_count = 0
+
+
+def choose_corner_escape_turn(scan_info, fallback_turn, now=None):
+    """Choose a stable escape direction for a corner/dead-end.
+
+    1) If a recent successful escape direction is locked, keep using it.
+    2) Otherwise, if an intentional EXPLORE branch led into the corner,
+       prefer the opposite direction.
+    3) Fall back to the LiDAR-open direction.
+
+    A preferred direction is never forced when that turn side is physically
+    blocked according to the LiDAR side clearance check.
+    """
+    now = time.monotonic() if now is None else now
+    locked = active_escape_lock(now)
+    if locked and not turn_side_blocked(locked, scan_info):
+        return locked
+
+    if last_explore_branch_turn in ("LEFT", "RIGHT"):
+        opposite = opposite_turn(last_explore_branch_turn)
+        if not turn_side_blocked(opposite, scan_info):
+            return opposite
+
+    return safe_turn_from_scan(fallback_turn, scan_info)
+
+
+def retry_committed_escape_after_backup(now, scan_info, reason):
+    """Back up without immediately reversing the committed turn.
+
+    The first side-clearance/emergency interruption keeps the same committed
+    direction. Only if that same committed direction fails again do we switch
+    to the opposite side. This prevents RIGHT/BACKUP/RIGHT/BACKUP oscillation
+    at corners while preserving a safety fallback.
+    """
+    global pending_escape_turn, pending_escape_resume_state
+    global escape_same_turn_backup_count
+
+    current_turn = committed_escape_turn
+    resume_after = committed_escape_resume_state
+    if current_turn not in ("LEFT", "RIGHT"):
+        return None
+
+    keep_same = escape_same_turn_backup_count < ESCAPE_SAME_TURN_BACKUP_LIMIT
+    retry_turn = current_turn if keep_same else opposite_turn(current_turn)
+    if keep_same:
+        escape_same_turn_backup_count += 1
+    else:
+        escape_same_turn_backup_count = 0
+        lock_escape_direction(retry_turn, now, reset_retry=False)
+
+    clear_committed_escape()
+    pending_escape_turn = retry_turn
+    pending_escape_resume_state = resume_after
+    enter_state(State.BACKUP, DEADEND_BACKUP_SECONDS)
+    set_motion("BACKWARD", force=True)
+    return f"{reason}_BACKUP_KEEP_{retry_turn}" if keep_same else f"{reason}_BACKUP_SWITCH_{retry_turn}"
+
+
+def should_backup_before_escape(scan_info):
+    """Back up first when the robot is genuinely boxed in near the front.
+
+    A plain front obstacle with a wide side opening can be handled by pivoting
+    directly.  When both side scores are also short, back up before committing
+    to the turn so the chassis has room to rotate out of the corner.
+    """
+    if scan_info["rear_blocked"]:
+        return False
+    if scan_info["emergency"] or scan_info["danger"] or both_sides_tight(scan_info):
+        return True
+    if scan_info["front_blocked"]:
+        side_opening = max(scan_info["left_score"], scan_info["right_score"])
+        return side_opening <= CORNER_BACKUP_SIDE_SCORE_MM
+    return False
+
+
+def schedule_next_explore_branch(now, initial=False):
+    global explore_next_branch_at
+
+    min_delay = EXPLORE_BRANCH_DELAY_SECONDS if initial else EXPLORE_BRANCH_MIN_INTERVAL
+    max_delay = max(min_delay, EXPLORE_BRANCH_MAX_INTERVAL)
+    explore_next_branch_at = now + random.uniform(min_delay, max_delay)
+
+
+def choose_free_explore_turn():
+    # EXPLORE is intentionally free-running. Do not steer from pose_x.
+    # Pick a short branch direction and avoid repeating the exact same
+    # intentional branch twice in a row.
+    preferred = random.choice(("LEFT", "RIGHT"))
+    if last_explore_branch_turn in ("LEFT", "RIGHT") and preferred == last_explore_branch_turn:
+        preferred = opposite_turn(preferred)
+    return preferred
 
 
 def should_try_branch(now):
@@ -514,19 +738,173 @@ def should_try_branch(now):
         return False
     if elapsed_from_start(now) < EXPLORE_BRANCH_DELAY_SECONDS:
         return False
-    if now - explore_last_nudge < EXPLORE_BRANCH_INTERVAL:
+    if explore_next_branch_at <= 0:
+        return True
+    if now < explore_next_branch_at:
         return False
     return True
+
+
+def distance_between(x1, y1, x2, y2):
+    return math.hypot(x2 - x1, y2 - y1)
+
+
+def target_heading_to(x, y):
+    dx = x - pose_x
+    dy = y - pose_y
+    return normalize_angle(math.degrees(math.atan2(dx, dy)))
+
+
+def heading_error_to(x, y):
+    return normalize_angle(target_heading_to(x, y) - heading_deg)
+
+
+def turn_for_heading_error(error):
+    return "RIGHT" if error > 0 else "LEFT"
+
+
+def best_lux_delta():
+    if best_lux < 0 or current_lux < 0:
+        return float("inf")
+    return abs(current_lux - best_lux)
+
+
+def begin_return_to_best(now):
+    global return_started, return_turn_motion, return_turn_until
+    global return_detour_started, return_detour_until
+
+    return_started = now
+    return_turn_motion = None
+    return_turn_until = 0.0
+    return_detour_started = 0.0
+    return_detour_until = 0.0
+    enter_state(State.RETURN_TO_BEST)
+    set_motion("STOP", force=True)
+
+
+def finish_light_search(label):
+    global search_finished
+    finalize_motion_log(time.monotonic())
+    enter_state(State.IDLE)
+    set_motion("STOP", force=True)
+    message = search_result_message(label)
+    write_display_state("report", message, duration=12.0)
+    print(
+        f"{label}: current_lux={current_lux:.1f} "
+        f"best_lux={best_lux:.1f} delta={best_lux_delta():.1f}"
+    )
+    try:
+        play_local_tts(message)
+    finally:
+        search_finished = True
+
+
+def begin_seek_light(now):
+    global seek_started, seek_last_error, seek_probe_motion, seek_probe_until
+    seek_started = now
+    seek_last_error = best_lux_delta()
+    seek_probe_motion = "FORWARD"
+    seek_probe_until = 0.0
+    enter_state(State.SEEK_LIGHT)
+    set_motion("STOP", force=True)
+
+
+def choose_return_motion(now):
+    global return_turn_motion, return_turn_until
+
+    error = heading_error_to(best_x, best_y)
+    if abs(error) <= RETURN_HEADING_TOLERANCE_DEGREES:
+        return_turn_motion = None
+        return_turn_until = 0.0
+        return "FORWARD"
+
+    desired = turn_for_heading_error(error)
+    if return_turn_motion == desired and now < return_turn_until:
+        return desired
+
+    return_turn_motion = desired
+    return_turn_until = now + RETURN_TURN_MIN_SECONDS
+    return desired
+
+
+def begin_return_detour(now):
+    global return_detour_started, return_detour_until, return_detour_x, return_detour_y
+    global return_turn_motion, return_turn_until
+
+    rad = math.radians(heading_deg)
+    return_detour_x = pose_x + math.sin(rad) * RETURN_DETOUR_DISTANCE_MM
+    return_detour_y = pose_y + math.cos(rad) * RETURN_DETOUR_DISTANCE_MM
+    return_detour_started = now
+    return_detour_until = now + RETURN_DETOUR_MAX_SECONDS
+    return_turn_motion = None
+    return_turn_until = 0.0
+    enter_state(State.RETURN_DETOUR)
+    set_motion("FORWARD", force=True)
+
+
+def choose_detour_motion(now):
+    global return_turn_motion, return_turn_until
+
+    if distance_between(pose_x, pose_y, return_detour_x, return_detour_y) <= RETURN_DETOUR_STOP_MARGIN:
+        return None
+
+    error = heading_error_to(return_detour_x, return_detour_y)
+    if abs(error) <= RETURN_HEADING_TOLERANCE_DEGREES:
+        return_turn_motion = None
+        return_turn_until = 0.0
+        return "FORWARD"
+
+    desired = turn_for_heading_error(error)
+    if return_turn_motion == desired and now < return_turn_until:
+        return desired
+
+    return_turn_motion = desired
+    return_turn_until = now + RETURN_TURN_MIN_SECONDS
+    return desired
+
+
+def choose_seek_light_motion(scan_info, now):
+    global seek_last_error, seek_probe_motion, seek_probe_until, last_explore_branch_turn
+
+    current_error = best_lux_delta()
+    if now < seek_probe_until:
+        return seek_probe_motion
+
+    if current_error <= seek_last_error + LIGHT_IMPROVE_MARGIN:
+        seek_last_error = current_error
+        seek_probe_motion = "FORWARD"
+        seek_probe_until = now + 0.6
+        return "FORWARD"
+
+    turn = choose_free_explore_turn()
+    turn = safe_turn_from_scan(turn, scan_info)
+    last_explore_branch_turn = turn
+    seek_last_error = current_error
+    seek_probe_motion = turn
+    seek_probe_until = now + EXPLORE_NUDGE_SECONDS
+    return turn
 
 
 def choose_escape_turn(points):
     turn, left_score, right_score = choose_open_turn(points)
     if turn == last_turn and turn_repeat_count >= 2:
         alternate = opposite_turn(turn)
-        if turn_space(alternate, left_score, right_score) > turn_space(turn, left_score, right_score) + SIDE_BALANCE_DEADBAND:
-            turn = alternate
-    turn = avoid_blocked_turn(turn, left_score, right_score)
+        turn = alternate
     return turn, left_score, right_score
+
+
+def adjust_repeated_escape_turn(turn, scan_info, now):
+    if not last_escape_done_turn:
+        return turn
+    if now - last_escape_done_time > ESCAPE_REPEAT_WINDOW_SECONDS:
+        return turn
+    if turn != last_escape_done_turn:
+        return turn
+
+    alternate = opposite_turn(turn)
+    if turn_side_blocked(alternate, scan_info):
+        return turn
+    return alternate
 
 
 def remember_turn_choice(turn):
@@ -537,13 +915,6 @@ def remember_turn_choice(turn):
     else:
         turn_repeat_count = 0
     last_turn = turn
-
-
-def has_turn_space(scan_info):
-    return (
-        scan_info["left_score"] >= TURN_SPACE_MIN_X
-        or scan_info["right_score"] >= TURN_SPACE_MIN_X
-    )
 
 
 def both_sides_tight(scan_info):
@@ -611,10 +982,6 @@ def lux_error_from_target(lux):
     if TARGET_LUX_MIN <= lux <= TARGET_LUX_MAX:
         return 0.0
     return min(abs(lux - TARGET_LUX_MIN), abs(lux - TARGET_LUX_MAX), abs(lux - TARGET_LUX))
-
-
-def lux_in_target_range(lux):
-    return TARGET_LUX_MIN <= lux <= TARGET_LUX_MAX
 
 
 def read_lux_fast():
@@ -693,64 +1060,6 @@ def finalize_motion_log(now):
     log_motion_change("STOP", now)
 
 
-def reverse_motion(motion):
-    if motion == "FORWARD":
-        return "BACKWARD"
-    if motion == "BACKWARD":
-        return "FORWARD"
-    if motion == "LEFT":
-        return "RIGHT"
-    if motion == "RIGHT":
-        return "LEFT"
-    return "STOP"
-
-
-def append_return_segment(segments, motion, duration):
-    if motion == "STOP" or duration < 0.08:
-        return
-    segments.append({"motion": motion, "duration": duration})
-
-
-def build_return_segments(now):
-    finalize_motion_log(now)
-    segments = []
-    return_facing_backward = False
-
-    for item in reversed(motion_log):
-        if item["end"] <= best_motion_time:
-            break
-
-        duration = item["duration"]
-        if item["start"] < best_motion_time:
-            duration = item["end"] - best_motion_time
-
-        reversed_motion = reverse_motion(item["motion"])
-        if reversed_motion == "STOP" or duration < 0.08:
-            continue
-
-        if not RETURN_ALLOW_BACKWARD and reversed_motion in ("FORWARD", "BACKWARD"):
-            if reversed_motion == "BACKWARD" and not return_facing_backward:
-                append_return_segment(segments, "LEFT", RETURN_TURN_AROUND_SECONDS)
-                return_facing_backward = True
-            elif reversed_motion == "FORWARD" and return_facing_backward:
-                append_return_segment(segments, "LEFT", RETURN_TURN_AROUND_SECONDS)
-                return_facing_backward = False
-
-            while duration > 0:
-                chunk = min(duration, RETURN_SEGMENT_MAX_SECONDS)
-                append_return_segment(segments, "FORWARD", chunk)
-                duration -= chunk
-            continue
-
-        max_duration = RETURN_BACKWARD_MAX_SECONDS if reversed_motion == "BACKWARD" else RETURN_SEGMENT_MAX_SECONDS
-        while duration > 0:
-            chunk = min(duration, max_duration)
-            append_return_segment(segments, reversed_motion, chunk)
-            duration -= chunk
-
-    return segments
-
-
 def elapsed_from_start(now):
     if explore_started <= 0:
         return 0.0
@@ -761,6 +1070,7 @@ def set_motion(motion, force=False):
     global current_motion, last_motion_send
 
     now = time.monotonic()
+    motion = guard_motion_for_door(motion)
     if not force and motion == current_motion and now - last_motion_send < COMMAND_REFRESH_SECONDS:
         return
 
@@ -787,6 +1097,111 @@ def enter_state(new_state, duration=0.0):
     state = new_state
     state_started = time.monotonic()
     state_until = state_started + duration if duration > 0 else 0.0
+
+
+def turn_progress_degrees(start_heading, current_heading, turn):
+    if turn == "RIGHT":
+        return normalize_angle(current_heading - start_heading)
+    return normalize_angle(start_heading - current_heading)
+
+
+def committed_escape_reached():
+    if not committed_escape_turn:
+        return False
+    progress = turn_progress_degrees(
+        committed_escape_start_heading,
+        heading_deg,
+        committed_escape_turn,
+    )
+    return progress >= ESCAPE_TURN_DEGREES - ESCAPE_TURN_TOLERANCE_DEGREES
+
+
+def clear_committed_escape():
+    global committed_escape_turn, committed_escape_start_heading, committed_escape_resume_state
+    committed_escape_turn = None
+    committed_escape_start_heading = 0.0
+    committed_escape_resume_state = None
+
+
+def begin_committed_escape(turn, resume_after=None):
+    global avoid_turn, committed_escape_turn, committed_escape_start_heading, committed_escape_resume_state
+    avoid_turn = turn
+    committed_escape_turn = turn
+    committed_escape_start_heading = heading_deg
+    committed_escape_resume_state = resume_after
+    enter_state(State.ESCAPE, ESCAPE_TURN_MAX_SECONDS)
+    set_motion(turn, force=True)
+    return f"ESCAPE_COMMIT_{turn}_{ESCAPE_TURN_DEGREES:.0f}DEG"
+
+
+def start_committed_escape(turn, scan_info, backup_first=False, resume_after=None):
+    global pending_escape_turn, pending_escape_resume_state
+
+    now = time.monotonic()
+    locked = active_escape_lock(now)
+
+    # During EXPLORE, a danger/dead-end that requires BACKUP is treated as a
+    # corner escape. If the robot recently branched RIGHT into a corner, prefer
+    # LEFT after backing up (and vice versa). A recently successful escape
+    # direction is temporarily locked so the robot does not alternate at the
+    # same wall every few hundred milliseconds.
+    if resume_after == State.EXPLORE and backup_first:
+        turn = choose_corner_escape_turn(scan_info, turn, now)
+        lock_escape_direction(turn, now, reset_retry=True)
+    elif locked and not turn_side_blocked(locked, scan_info):
+        turn = locked
+    else:
+        turn = safe_turn_from_scan(turn, scan_info)
+
+    if backup_first and not scan_info["rear_blocked"]:
+        pending_escape_turn = turn
+        pending_escape_resume_state = resume_after
+        enter_state(State.BACKUP, DEADEND_BACKUP_SECONDS)
+        set_motion("BACKWARD", force=True)
+        return f"ESCAPE_BACKUP_BEFORE_{turn}"
+    return begin_committed_escape(turn, resume_after)
+
+
+def resume_explore_after_escape(now, completed_turn=None):
+    global explore_last_nudge, explore_nudge_until, explore_nudge_motion
+    global last_explore_branch_turn, explore_hold_forward_until
+
+    explore_last_nudge = now
+    explore_nudge_until = 0.0
+    explore_nudge_motion = "FORWARD"
+    explore_hold_forward_until = now + EXPLORE_POST_ESCAPE_FORWARD_SECONDS
+    if completed_turn in ("LEFT", "RIGHT"):
+        last_explore_branch_turn = completed_turn
+        # Keep the successful corner-exit direction for a short window. If the
+        # same wall is detected again immediately, continue going around it
+        # instead of flipping LEFT/RIGHT on each scan.
+        lock_escape_direction(completed_turn, now, reset_retry=True)
+    schedule_next_explore_branch(now, initial=True)
+    enter_state(State.EXPLORE)
+    set_motion("FORWARD", force=True)
+
+
+def resume_after_escape(now):
+    global resume_state, return_until, last_escape_done_turn, last_escape_done_time
+    next_state = committed_escape_resume_state or resume_state or State.EXPLORE
+    completed_turn = committed_escape_turn
+    last_escape_done_turn = completed_turn
+    last_escape_done_time = now
+    resume_state = None
+    clear_committed_escape()
+    if next_state == State.RETURN_DETOUR:
+        begin_return_detour(now)
+        return next_state
+    if next_state == State.RETURN_TO_BEST:
+        enter_state(next_state)
+        return_until = 0.0
+        set_motion("STOP", force=True)
+    elif next_state == State.EXPLORE:
+        resume_explore_after_escape(now, completed_turn)
+    else:
+        enter_state(next_state)
+        set_motion("FORWARD", force=True)
+    return next_state
 
 
 def update_light(now):
@@ -825,29 +1240,6 @@ def update_soil(now):
     current_soil = soil
 
 
-def exploration_bias():
-    return None
-
-
-def field_guidance_motion(scan_info, now):
-    if scan_info["emergency"] or scan_info["danger"] or scan_info["front_blocked"]:
-        return None
-
-    if pose_y <= FIELD_BACK_Y + FIELD_MARGIN_MM:
-        return "FORWARD"
-
-    if pose_y >= FIELD_FRONT_Y - FIELD_MARGIN_MM:
-        return "LEFT" if pose_x >= 0 else "RIGHT"
-
-    if pose_x <= FIELD_LEFT_X + FIELD_MARGIN_MM:
-        return "RIGHT"
-
-    if pose_x >= FIELD_RIGHT_X - FIELD_MARGIN_MM:
-        return "LEFT"
-
-    return None
-
-
 def choose_explore_clear_motion(scan_info, now):
     global explore_last_nudge, explore_nudge_until, explore_nudge_motion, last_explore_branch_turn
 
@@ -855,25 +1247,12 @@ def choose_explore_clear_motion(scan_info, now):
         return None
 
     if now < explore_nudge_until:
-        if explore_nudge_motion in ("LEFT", "RIGHT"):
-            return safe_turn_from_scan(explore_nudge_motion, scan_info)
         return explore_nudge_motion
 
-    side_nudge_ready = now - explore_last_nudge >= EXPLORE_NUDGE_INTERVAL
+    if now < explore_hold_forward_until:
+        return "FORWARD"
 
-    field_motion = field_guidance_motion(scan_info, now)
-    if field_motion is not None:
-        if field_motion in ("LEFT", "RIGHT") and not side_nudge_ready:
-            return "FORWARD"
-        explore_last_nudge = now
-        if field_motion in ("LEFT", "RIGHT"):
-            field_motion = safe_turn_from_scan(field_motion, scan_info)
-            if field_motion in ("LEFT", "RIGHT"):
-                explore_nudge_motion = field_motion
-                explore_nudge_until = now + min(EXPLORE_NUDGE_SECONDS, 0.25)
-                return field_motion
-            return "FORWARD"
-        return field_motion
+    side_nudge_ready = now - explore_last_nudge >= EXPLORE_NUDGE_INTERVAL
 
     front_points = len(scan_info["front"])
     left_score = scan_info["left_score"]
@@ -881,57 +1260,57 @@ def choose_explore_clear_motion(scan_info, now):
     left_count = scan_info["left_count"]
     right_count = scan_info["right_count"]
 
-    # If both sides are close but the front lane is open, treat it as a passage
-    # and keep moving through the middle instead of turning away.
+    # Continue straight in a narrow passage only while the robot is centered.
+    # An unbalanced passage must reach the side-correction checks below.
     if (
         front_points == 0
         and left_score < EXPLORE_PASSAGE_SIDE_LIMIT
         and right_score < EXPLORE_PASSAGE_SIDE_LIMIT
+        and abs(left_score - right_score) <= PASSAGE_CENTER_DEADBAND
     ):
         return "FORWARD"
 
     # Side-only obstacles do not always enter the front lane. Handle them here
     # so the robot does not keep spinning or scraping near a box/wall.
-    if side_nudge_ready and right_count >= 2 and right_score < SIDE_TOO_CLOSE_X:
+    right_critical = right_count >= 2 and right_score < SIDE_CRITICAL_X
+    if (
+        (side_nudge_ready or right_critical)
+        and right_count >= 2
+        and right_score < SIDE_TOO_CLOSE_X
+    ):
         explore_last_nudge = now
         explore_nudge_motion = "LEFT"
         explore_nudge_until = now + min(EXPLORE_NUDGE_SECONDS, 0.25)
         return "LEFT"
 
-    if side_nudge_ready and left_count >= 2 and left_score < SIDE_TOO_CLOSE_X:
+    left_critical = left_count >= 2 and left_score < SIDE_CRITICAL_X
+    if (
+        (side_nudge_ready or left_critical)
+        and left_count >= 2
+        and left_score < SIDE_TOO_CLOSE_X
+    ):
         explore_last_nudge = now
         explore_nudge_motion = "RIGHT"
         explore_nudge_until = now + min(EXPLORE_NUDGE_SECONDS, 0.25)
         return "RIGHT"
 
-    if not EXPLORE_AUTO_NUDGE:
-        if should_try_branch(now):
-            branch_turn = choose_branch_turn(scan_info)
-            if branch_turn:
-                explore_last_nudge = now
-                last_explore_branch_turn = branch_turn
-                explore_nudge_motion = safe_turn_from_scan(branch_turn, scan_info)
-                explore_nudge_until = now + EXPLORE_BRANCH_SECONDS
-                return explore_nudge_motion
-        return "FORWARD"
+    if should_try_branch(now):
+        branch_motion = choose_free_explore_turn()
+        branch_motion = safe_turn_from_scan(branch_motion, scan_info)
+        explore_last_nudge = now
+        last_explore_branch_turn = branch_motion
+        explore_nudge_motion = branch_motion
+        explore_nudge_until = now + EXPLORE_BRANCH_SECONDS
+        schedule_next_explore_branch(now)
+        return branch_motion
 
-    if now - explore_last_nudge < EXPLORE_NUDGE_INTERVAL:
-        return "FORWARD"
-
-    explore_last_nudge = now
-    elapsed = elapsed_from_start(now)
-    if int(elapsed // EXPLORE_BIAS_SWITCH_SECONDS) % 2 == 0:
-        explore_nudge_motion = "LEFT"
-    else:
-        explore_nudge_motion = "RIGHT"
-    explore_nudge_until = now + EXPLORE_NUDGE_SECONDS
-    return explore_nudge_motion
+    return "FORWARD"
 
 
 def fsm_step(scan_info, now):
-    global avoid_turn, last_turn, turn_repeat_count
+    global avoid_turn, last_turn, turn_repeat_count, pending_escape_turn, pending_escape_resume_state
     global explore_started, seek_started, best_lux, best_lux_error, best_lux_time
-    global return_segments, return_index, return_until, resume_state
+    global return_until, resume_state, return_started
 
     nearest = scan_info["nearest"]
     front_gap = nearest[2] - LIDAR_TO_FRONT_AXLE if nearest else None
@@ -942,70 +1321,48 @@ def fsm_step(scan_info, now):
 
     if state in (State.EXPLORE, State.SEEK_LIGHT):
         if state == State.EXPLORE and now - explore_started >= EXPLORE_SECONDS:
-            return_segments = build_return_segments(now)
-            return_index = 0
-            return_until = 0.0
-            if return_segments:
-                enter_state(State.RETURN_TO_BEST)
-                print(
-                    f"EXPLORE DONE: best_lux={best_lux:.1f} "
-                    f"best_time={best_lux_time - explore_started:.1f}s "
-                    f"return_segments={len(return_segments)}"
-                )
-                return "RETURN_START", front_gap
-
-            seek_started = now
-            enter_state(State.SEEK_LIGHT)
+            finalize_motion_log(now)
+            begin_return_to_best(now)
             print(
                 f"EXPLORE DONE: best_lux={best_lux:.1f} "
                 f"best_time={best_lux_time - explore_started:.1f}s "
-                "entering SEEK_LIGHT"
+                f"best_coord=({best_x:.0f},{best_y:.0f}) "
+                f"current=({pose_x:.0f},{pose_y:.0f})"
             )
+            return "RETURN_START", front_gap
 
         if scan_info["emergency"]:
-            if scan_info["rear_blocked"]:
-                avoid_turn, _, _ = choose_escape_turn(scan_info["points"])
-                enter_state(State.ESCAPE, ESCAPE_TURN_SECONDS)
-                set_motion(avoid_turn, force=True)
-            else:
-                enter_state(State.BACKUP, BACKUP_SECONDS)
-                set_motion("BACKWARD", force=True)
-            return "EMERGENCY", front_gap
+            avoid_turn, _, _ = choose_escape_turn(scan_info["points"])
+            remember_turn_choice(avoid_turn)
+            label = start_committed_escape(
+                avoid_turn,
+                scan_info,
+                backup_first=should_backup_before_escape(scan_info),
+                resume_after=state,
+            )
+            return f"EMERGENCY_{label}", front_gap
 
         if scan_info["danger"] or scan_info["front_blocked"]:
             avoid_turn, _, _ = choose_escape_turn(scan_info["points"])
+            avoid_turn = adjust_repeated_escape_turn(avoid_turn, scan_info, now)
             remember_turn_choice(avoid_turn)
-            if both_sides_tight(scan_info):
-                if not scan_info["rear_blocked"]:
-                    enter_state(State.BACKUP, TRAPPED_BACKUP_SECONDS)
-                    set_motion("BACKWARD", force=True)
-                    return "TRAPPED_BACKUP", front_gap
-                enter_state(State.ESCAPE, TRAPPED_ESCAPE_SECONDS)
-                set_motion(avoid_turn, force=True)
-                return "TRAPPED_ESCAPE", front_gap
-
-            if scan_info["rear_blocked"] or not scan_info["danger"]:
-                enter_state(State.AVOID, TURN_PULSE_SECONDS)
-                set_motion(avoid_turn, force=True)
-                return "AVOID_START", front_gap
-
-            enter_state(State.BACKUP, BACKUP_SECONDS)
-            set_motion("BACKWARD", force=True)
-            return f"BACKUP_BEFORE_{avoid_turn}", front_gap
+            backup_first = should_backup_before_escape(scan_info)
+            label = start_committed_escape(avoid_turn, scan_info, backup_first=backup_first, resume_after=state)
+            return label, front_gap
 
         if state == State.SEEK_LIGHT:
             if seek_started <= 0:
                 seek_started = now
 
-            if lux_error_from_target(current_lux) <= LIGHT_FOUND_MARGIN:
-                set_motion("STOP", force=True)
+            if best_lux_delta() <= LIGHT_FOUND_MARGIN:
+                finish_light_search("SEEK_LIGHT_FOUND")
                 return "SEEK_LIGHT_FOUND", front_gap
 
             if now - seek_started >= LIGHT_SEEK_SECONDS:
-                set_motion("STOP", force=True)
+                finish_light_search("SEEK_LIGHT_TIMEOUT")
                 return "SEEK_LIGHT_TIMEOUT", front_gap
 
-            seek_motion = choose_explore_clear_motion(scan_info, now)
+            seek_motion = choose_seek_light_motion(scan_info, now)
             if seek_motion is not None:
                 set_motion(seek_motion)
                 return f"SEEK_{seek_motion}", front_gap
@@ -1019,69 +1376,81 @@ def fsm_step(scan_info, now):
                 set_motion(explore_motion)
                 return f"EXPLORE_{explore_motion}", front_gap
 
-            bias = exploration_bias()
-            if bias and not scan_info["front_blocked"]:
-                set_motion(bias)
-                return f"EXPLORE_BEST_{bias}", front_gap
-
         set_motion("FORWARD")
         return "FORWARD", front_gap
 
     if state == State.RETURN_TO_BEST:
-        if lux_error_from_target(current_lux) <= RETURN_STOP_MARGIN:
-            seek_started = now
-            enter_state(State.SEEK_LIGHT)
-            set_motion("STOP", force=True)
+        if best_lux_delta() <= LIGHT_FOUND_MARGIN:
+            finish_light_search("RETURN_TO_BEST_DONE")
             return "RETURN_LUX_FOUND", front_gap
 
-        if return_index >= len(return_segments):
-            seek_started = now
-            enter_state(State.SEEK_LIGHT)
-            set_motion("STOP", force=True)
-            return "RETURN_DONE", front_gap
+        distance_to_best = distance_between(pose_x, pose_y, best_x, best_y)
+        return_timed_out = return_started > 0 and now - return_started >= RETURN_MAX_SECONDS
+        if distance_to_best <= RETURN_STOP_MARGIN or return_timed_out:
+            if best_lux_delta() <= LIGHT_FOUND_MARGIN:
+                finish_light_search("RETURN_TO_BEST_DONE")
+                return "RETURN_FINISH", front_gap
+            begin_seek_light(now)
+            return "RETURN_DONE_SEEK_LIGHT", front_gap
 
-        active_return_motion = current_motion if return_until > 0.0 and now < return_until else None
-        next_return_motion = active_return_motion or return_segments[return_index]["motion"]
-
-        if next_return_motion == "BACKWARD" and scan_info["rear_blocked"]:
-            set_motion("STOP", force=True)
-            return_until = 0.0
-            if active_return_motion is None:
-                return_index += 1
-            return "RETURN_REAR_BLOCK_SKIP", front_gap
-
-        if next_return_motion != "BACKWARD" and (
-            scan_info["emergency"] or scan_info["danger"] or scan_info["front_blocked"]
-        ):
-            if both_sides_tight(scan_info) and not scan_info["rear_blocked"]:
-                resume_state = State.RETURN_TO_BEST
-                enter_state(State.BACKUP, TRAPPED_BACKUP_SECONDS)
-                set_motion("BACKWARD", force=True)
-                return "RETURN_TRAPPED_BACKUP", front_gap
-
+        if scan_info["emergency"] or scan_info["danger"] or scan_info["front_blocked"]:
             avoid_turn, _, _ = choose_escape_turn(scan_info["points"])
+            avoid_turn = adjust_repeated_escape_turn(avoid_turn, scan_info, now)
             remember_turn_choice(avoid_turn)
-            resume_state = State.RETURN_TO_BEST
-            enter_state(State.AVOID, TURN_PULSE_SECONDS)
-            set_motion(avoid_turn, force=True)
-            return "RETURN_AVOID", front_gap
+            backup_first = should_backup_before_escape(scan_info)
+            label = start_committed_escape(
+                avoid_turn,
+                scan_info,
+                backup_first=backup_first,
+                resume_after=State.RETURN_DETOUR,
+            )
+            return f"RETURN_{label}", front_gap
 
-        if return_until == 0.0 or now >= return_until:
-            segment = return_segments[return_index]
-            return_until = now + segment["duration"]
-            return_index += 1
-            set_motion(segment["motion"], force=True)
-            return f"RETURN_{segment['motion']}", front_gap
+        return_motion = choose_return_motion(now)
+        set_motion(return_motion)
+        return f"RETURN_{return_motion}", front_gap
 
-        set_motion(current_motion)
-        return "RETURNING", front_gap
+    if state == State.RETURN_DETOUR:
+        if best_lux_delta() <= LIGHT_FOUND_MARGIN:
+            finish_light_search("RETURN_TO_BEST_DONE")
+            return "DETOUR_LUX_FOUND", front_gap
+
+        if scan_info["emergency"] or scan_info["danger"] or scan_info["front_blocked"]:
+            avoid_turn, _, _ = choose_escape_turn(scan_info["points"])
+            avoid_turn = adjust_repeated_escape_turn(avoid_turn, scan_info, now)
+            remember_turn_choice(avoid_turn)
+            backup_first = should_backup_before_escape(scan_info)
+            label = start_committed_escape(
+                avoid_turn,
+                scan_info,
+                backup_first=backup_first,
+                resume_after=State.RETURN_DETOUR,
+            )
+            return f"DETOUR_{label}", front_gap
+
+        detour_done = (
+            distance_between(pose_x, pose_y, return_detour_x, return_detour_y)
+            <= RETURN_DETOUR_STOP_MARGIN
+        )
+        detour_timed_out = return_detour_until > 0 and now >= return_detour_until
+        if detour_done or detour_timed_out:
+            enter_state(State.RETURN_TO_BEST)
+            set_motion("STOP", force=True)
+            return "DETOUR_DONE_RETURN", front_gap
+
+        detour_motion = choose_detour_motion(now)
+        if detour_motion is None:
+            enter_state(State.RETURN_TO_BEST)
+            set_motion("STOP", force=True)
+            return "DETOUR_REACHED_RETURN", front_gap
+
+        set_motion(detour_motion)
+        return f"DETOUR_{detour_motion}", front_gap
 
     if state == State.AVOID:
         if state_until and now >= state_until:
             if scan_info["clear"] or (not scan_info["danger"] and not scan_info["front_blocked"]):
-                next_state = resume_state or (
-                    State.EXPLORE if now - explore_started < EXPLORE_SECONDS else State.SEEK_LIGHT
-                )
+                next_state = resume_state or State.EXPLORE
                 resume_state = None
                 enter_state(next_state)
                 if next_state == State.RETURN_TO_BEST:
@@ -1123,14 +1492,19 @@ def fsm_step(scan_info, now):
 
     if state == State.BACKUP:
         if state_until and now >= state_until:
+            if pending_escape_turn:
+                avoid_turn = pending_escape_turn
+                resume_after = pending_escape_resume_state
+                pending_escape_turn = None
+                pending_escape_resume_state = None
+                return begin_committed_escape(avoid_turn, resume_after), front_gap
+
             if (scan_info["front_blocked"] or scan_info["danger"]) and both_sides_tight(scan_info):
                 if not scan_info["rear_blocked"]:
                     enter_state(State.BACKUP, TRAPPED_BACKUP_SECONDS)
                     set_motion("BACKWARD", force=True)
                     return "TRAPPED_BACKUP_MORE", front_gap
-                enter_state(State.ESCAPE, TRAPPED_ESCAPE_SECONDS)
-                set_motion(avoid_turn, force=True)
-                return "TRAPPED_ESCAPE", front_gap
+                return begin_committed_escape(avoid_turn), front_gap
 
             if resume_state == State.RETURN_TO_BEST:
                 enter_state(State.RETURN_TO_BEST)
@@ -1139,17 +1513,55 @@ def fsm_step(scan_info, now):
                 resume_state = None
                 return "BACKUP_RETURN_RESUME", front_gap
 
-            enter_state(State.AVOID, TURN_PULSE_SECONDS)
-            set_motion(avoid_turn, force=True)
-            return "BACKUP_DONE", front_gap
+            avoid_turn = safe_turn_from_scan(avoid_turn, scan_info)
+            return begin_committed_escape(avoid_turn), front_gap
 
         set_motion("BACKWARD")
         return "BACKING", front_gap
 
     if state == State.ESCAPE:
+        if committed_escape_turn:
+            if turn_side_blocked(committed_escape_turn, scan_info) and not scan_info["rear_blocked"]:
+                label = retry_committed_escape_after_backup(now, scan_info, "ESCAPE_SIDE_BLOCK")
+                if label:
+                    return label, front_gap
+
+            if scan_info["emergency"] and not scan_info["rear_blocked"]:
+                label = retry_committed_escape_after_backup(now, scan_info, "ESCAPE_EMERGENCY")
+                if label:
+                    return label, front_gap
+
+            reached = committed_escape_reached()
+            timed_out = bool(state_until and now >= state_until)
+
+            # ESCAPE_TURN_DEGREES is a MINIMUM committed turn, not an
+            # immediate switch point.  Once the minimum angle is reached,
+            # keep rotating in the SAME direction while the front is still
+            # blocked.  This prevents LEFT -> BACKUP -> RIGHT oscillation
+            # when the chassis needs a little more than the nominal angle
+            # to clear a wall/corner.
+            if reached and not (scan_info["danger"] or scan_info["front_blocked"]):
+                next_state = resume_after_escape(now)
+                return f"ESCAPE_DONE_{next_state.value}", front_gap
+
+            if timed_out:
+                if not (scan_info["danger"] or scan_info["front_blocked"]):
+                    next_state = resume_after_escape(now)
+                    return f"ESCAPE_DONE_{next_state.value}", front_gap
+
+                # At the hard timeout, back up and retry the SAME committed
+                # direction once.  Only the following failure may switch to
+                # the opposite direction via retry_committed_escape_after_backup().
+                label = retry_committed_escape_after_backup(now, scan_info, "ESCAPE_TIMEOUT")
+                if label:
+                    return label, front_gap
+
+            set_motion(committed_escape_turn)
+            phase = "MIN_REACHED_KEEP" if reached else "TO"
+            return f"ESCAPING_{phase}_{committed_escape_turn}_{ESCAPE_TURN_DEGREES:.0f}DEG", front_gap
+
         if state_until and now >= state_until:
-            enter_state(State.EXPLORE if now - explore_started < EXPLORE_SECONDS else State.SEEK_LIGHT)
-            set_motion("FORWARD", force=True)
+            resume_explore_after_escape(now, avoid_turn)
             return "ESCAPE_DONE", front_gap
 
         set_motion(avoid_turn)
@@ -1193,20 +1605,6 @@ def print_status(label, scan_info, front_gap):
     )
 
 
-def runtime_phase(now):
-    if state == State.EXPLORE:
-        return "조도탐색(1차)", max(0.0, EXPLORE_SECONDS - elapsed_from_start(now))
-    if state == State.RETURN_TO_BEST:
-        remaining = sum(segment["duration"] for segment in return_segments[return_index:])
-        return "복귀이동", max(0.0, remaining)
-    if state == State.SEEK_LIGHT:
-        elapsed = now - seek_started if seek_started > 0 else 0.0
-        return "추가탐색(2차)", max(0.0, LIGHT_SEEK_SECONDS - elapsed)
-    if state in (State.AVOID, State.BACKUP, State.ESCAPE):
-        return "장애물회피", max(0.0, state_until - now) if state_until else None
-    return "대기", None
-
-
 def publish_runtime_state(scan_info, label, now):
     global last_runtime_write
     if now - last_runtime_write < 0.25:
@@ -1218,6 +1616,7 @@ def publish_runtime_state(scan_info, label, now):
         state.value,
         current_motion,
         phase=phase,
+        detail_state=detail_state_label(),
         label=label,
         remaining_seconds=round(remaining, 1) if remaining is not None else None,
         current_lux=round(current_lux, 1),
@@ -1230,15 +1629,7 @@ def publish_runtime_state(scan_info, label, now):
         best_x=round(best_x, 1),
         best_y=round(best_y, 1),
         blocked_count=len(blocked_map),
-        obstacle=(
-            "emergency"
-            if scan_info["emergency"]
-            else "danger"
-            if scan_info["danger"]
-            else "front_blocked"
-            if scan_info["front_blocked"]
-            else "clear"
-        ),
+        obstacle=obstacle_label(scan_info),
     )
 
 
@@ -1290,6 +1681,7 @@ def open_lidar_device():
 try:
     print("=" * 50)
     print("FSM lidar drive + light exploration")
+    print(f"DRIVE_BUILD={DRIVE_BUILD}")
     print("Remote key 1: start, key 2: stop")
     print(
         f"USE_DUMMY_LUX={USE_DUMMY_LUX} USE_DUMMY_SOIL={USE_DUMMY_SOIL} "
@@ -1300,12 +1692,35 @@ try:
     print(
         f"EXPLORE_BRANCH enabled={EXPLORE_BRANCH_ENABLED} "
         f"delay={EXPLORE_BRANCH_DELAY_SECONDS:.1f}s "
-        f"interval={EXPLORE_BRANCH_INTERVAL:.1f}s "
-        f"turn={EXPLORE_BRANCH_SECONDS:.2f}s open={EXPLORE_BRANCH_OPEN_MM:.0f}mm"
+        f"random_interval={EXPLORE_BRANCH_MIN_INTERVAL:.1f}-{EXPLORE_BRANCH_MAX_INTERVAL:.1f}s "
+        f"turn={EXPLORE_BRANCH_SECONDS:.2f}s open={EXPLORE_BRANCH_OPEN_MM:.0f}mm "
+        f"edge_bias_x={EXPLORE_EDGE_BIAS_X:.0f}mm "
+        f"post_escape_forward={EXPLORE_POST_ESCAPE_FORWARD_SECONDS:.1f}s"
     )
     print(
-        f"DRIVE_SPEED forward={controller.forward_speed} "
-        f"turn={controller.turn_speed} backward={controller.backward_speed}"
+        f"RETURN coord_target enabled max={RETURN_MAX_SECONDS:.0f}s "
+        f"tol={RETURN_HEADING_TOLERANCE_DEGREES:.0f}deg "
+        f"detour={RETURN_DETOUR_DISTANCE_MM:.0f}mm/{RETURN_DETOUR_MAX_SECONDS:.1f}s"
+    )
+    print(
+        f"DRIVE_SPEED forward={getattr(controller, 'forward_speed', 'legacy')} "
+        f"turn={getattr(controller, 'turn_speed', 'legacy')} "
+        f"backward={getattr(controller, 'backward_speed', 'legacy')}"
+    )
+    print(
+        f"POSE_CAL linear={POSE_LINEAR_MM_PER_SEC:.0f}mm/s "
+        f"turn={POSE_TURN_DEG_PER_SEC:.0f}deg/s max_dt={POSE_UPDATE_MAX_DT:.2f}s "
+        f"avoid_pulse={TURN_PULSE_SECONDS:.2f}s escape_fallback={ESCAPE_TURN_SECONDS:.2f}s"
+    )
+    print(
+        f"ESCAPE committed_turn={ESCAPE_TURN_DEGREES:.0f}deg(min) "
+        f"max={ESCAPE_TURN_MAX_SECONDS:.2f}s backup={DEADEND_BACKUP_SECONDS:.2f}s "
+        f"dir_lock={ESCAPE_DIRECTION_LOCK_SECONDS:.1f}s "
+        f"corner_backup_side<={CORNER_BACKUP_SIDE_SCORE_MM:.0f}mm"
+    )
+    print(
+        f"DOOR_GUARD enabled={DOOR_GUARD_ENABLED} "
+        f"x<=+/-{DOOR_HALF_WIDTH_MM:.0f}mm y<={DOOR_EXIT_Y_MM:.0f}mm"
     )
     print(f"LIDAR_POST={LIDAR_POST_ENABLED} url={ONPLANT_SERVER_URL} robot={ONPLANT_ROBOT_ID}")
     print("=" * 50)
@@ -1342,11 +1757,18 @@ try:
                     explore_started = now
                     dummy_sensor_started = now
                     explore_last_nudge = now
+                    explore_next_branch_at = 0.0
+                    explore_hold_forward_until = 0.0
                     seek_started = 0.0
-                    return_segments = []
-                    return_index = 0
                     return_until = 0.0
                     resume_state = None
+                    pending_escape_turn = None
+                    pending_escape_resume_state = None
+                    last_escape_done_turn = None
+                    last_escape_done_time = 0.0
+                    last_explore_branch_turn = None
+                    schedule_next_explore_branch(now, initial=True)
+                    clear_committed_escape()
                     motion_log = []
                     active_motion = "STOP"
                     active_motion_started = now
@@ -1362,6 +1784,12 @@ try:
                     print("AUTO START: EXPLORE")
                 elif key == STOP_KEY and state != State.IDLE:
                     finalize_motion_log(now)
+                    pending_escape_turn = None
+                    pending_escape_resume_state = None
+                    last_escape_done_turn = None
+                    last_escape_done_time = 0.0
+                    explore_hold_forward_until = 0.0
+                    clear_committed_escape()
                     enter_state(State.IDLE)
                     set_motion("STOP", force=True)
                     print("AUTO STOP")
@@ -1378,6 +1806,10 @@ try:
                 if now - last_print >= PRINT_INTERVAL:
                     print_status(label, scan_info, front_gap)
                     last_print = now
+                if search_finished:
+                    break
+            if search_finished:
+                break
         except SerialException as exc:
             lidar_retry_count += 1
             print(f"LIDAR READ ERROR retry={lidar_retry_count}: {exc}")

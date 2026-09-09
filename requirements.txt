@@ -3,3 +3,4 @@ rplidar-roboticia==0.9.5
 smbus2==0.6.1
 requests>=2.31.0
 adafruit-circuitpython-dht>=4.0.0
+opencv-python-headless>=4.10.0
