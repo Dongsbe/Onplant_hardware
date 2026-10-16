@@ -23,6 +23,10 @@ OnPlant Hardware는 반려식물 관리 로봇의 Raspberry Pi 측 코드를 모
 | 주요 기술 | Python, Raspberry Pi, I2C/GPIO, LiDAR, systemd |
 | 서버 연동 | OnPlant Server REST API |
 
+## 하드웨어 구성도
+
+![OnPlant 하드웨어 구성도](assets/hardware-architecture.png)
+
 ## 동작 구조
 
 ```text
